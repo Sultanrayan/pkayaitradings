@@ -1,0 +1,99 @@
+# Production compose for a single UpCloud server.
+#
+# Only Caddy (port 80) is exposed publicly. It serves the Next.js frontend and
+# proxies /api, /ws and /health to the API, so the browser talks to a single
+# origin and no CORS or extra firewall ports are needed.
+#
+# Usage (on the server):
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+name: pkay-tdai
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pkay-tdai-api:latest
+    environment:
+      ENVIRONMENT: production
+      LOG_JSON: "true"
+      BROKER: paper
+      AUTH_REQUIRED: "true"
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET must be set}
+      # Same-origin deploy, so CORS is effectively unused; kept for safety.
+      CORS_ORIGINS: '["https://trade.pkay.fun"]'
+      # Google OAuth
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+      FRONTEND_URL: ${FRONTEND_URL:-}
+      # OpenAI-compatible LLM used by all four agents
+      LLM_PROVIDER: ${LLM_PROVIDER:-none}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1500}
+      # Durable data: users + access requests survive restarts and redeploys.
+      DATA_DIR: /data
+      # Brevo transactional email (developer access tokens).
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+      BREVO_API_URL: ${BREVO_API_URL:-https://api.brevo.com/v3/smtp/email}
+      EMAIL_SENDER: ${EMAIL_SENDER:-no-reply@pkay.fun}
+      EMAIL_SENDER_NAME: ${EMAIL_SENDER_NAME:-Pkay TDAI}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://trade.pkay.fun}
+      LOGO_URL: ${LOGO_URL:-https://trade.pkay.fun/logo-pkay.jpg}
+      # Fallback SMTP relay (used only when BREVO_API_KEY is empty).
+      SMTP_HOST: ${SMTP_HOST:-smtp-relay.brevo.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_LOGIN: ${SMTP_LOGIN:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      # Cloudflare Turnstile bot check (empty disables verification).
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      # Khpay KHQR payments for plan upgrades (empty disables checkout).
+      KHPAY_API_KEY: ${KHPAY_API_KEY:-}
+      KHPAY_BASE_URL: ${KHPAY_BASE_URL:-https://khpay.site/api/v1}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-menmengleapx1@gmail.com}
+    volumes:
+      - pkay_data:/data
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?NEXT_PUBLIC_API_BASE_URL must be set}
+        NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+    image: pkay-tdai-frontend:latest
+    environment:
+      PORT: "3000"
+    expose:
+      - "3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  proxy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
+  # Persisted user accounts and developer access requests (DATA_DIR=/data).
+  # Back this up before rebuilding the server: deploy/backup-data.sh
+  pkay_data:

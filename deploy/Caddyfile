@@ -1,0 +1,26 @@
+# Caddy reverse proxy for the Pkay TDAI server.
+# Using the domain as the site address makes Caddy obtain and renew a
+# Let's Encrypt certificate automatically and redirect HTTP to HTTPS.
+trade.pkay.fun {
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle /ws/* {
+		reverse_proxy api:8000
+	}
+
+	handle /health {
+		reverse_proxy api:8000
+	}
+
+	# NOTE: FastAPI's /docs, /redoc and /openapi.json are intentionally not
+	# proxied. They are disabled on the API too, so the endpoint surface stays
+	# hidden from the browser.
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}
