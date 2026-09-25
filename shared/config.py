@@ -202,6 +202,17 @@ class Settings(BaseSettings):
     # Where the browser is sent after a successful Google sign-in.
     frontend_url: str = "http://localhost:3000"
 
+    # --- RAG engine (GraphRAG self-improvement layer) ---
+    # Exposes the ``Raggrap`` engine under ``/api/v1/raggrap``. The engine reuses
+    # the main LLM settings (``llm_provider``/``llm_model``/``llm_base_url``) so
+    # corrections retrieved from past mistakes guardrail the same model.
+    raggrap_enabled: bool = True
+    raggrap_main_llm_model: str = "gpt-4o"
+    raggrap_critic_llm_model: str = "gpt-4o-mini"
+    raggrap_max_related_mistakes: int = 5
+    raggrap_cache_enabled: bool = True
+    raggrap_cache_ttl: int = 3600
+
     # --- Email (Brevo) ---
     # Preferred: Brevo's transactional email HTTP API (https://api.brevo.com/v3).
     # Set BREVO_API_KEY to an ``xkeysib-...`` key. The SMTP relay below is only

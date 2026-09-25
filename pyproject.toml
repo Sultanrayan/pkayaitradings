@@ -84,6 +84,11 @@ packages = [
     "data_pipeline",
     "execution",
     "orchestrator",
+    "Raggrap",
+    "Raggrap.config",
+    "Raggrap.src",
+    "Raggrap.src.core",
+    "Raggrap.src.models",
 ]
 
 [tool.pytest.ini_options]
@@ -113,7 +118,10 @@ exclude_lines = [
 line-length = 100
 target-version = "py311"
 src = ["."]
-exclude = [".venv", "venv", "frontend", "Research", "build", "dist"]
+exclude = [
+    ".venv", "venv", "frontend", "Research", "build", "dist",
+    "Raggrap/research", "Raggrap/Img",
+]
 
 [tool.ruff.lint]
 select = [
@@ -124,6 +132,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# The Raggrap engine lives in its own documented project folder ("Raggrap/").
+"Raggrap/**" = ["N999"]
 "tests/**" = ["S101"]
 
 [tool.ruff.lint.isort]
@@ -136,9 +146,15 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 disallow_untyped_defs = true
 plugins = ["pydantic.mypy"]
-files = ["agents", "shared", "data_pipeline", "execution", "orchestrator"]
-exclude = ["venv", "\\.venv", "build", "dist"]
+files = ["agents", "shared", "data_pipeline", "execution", "orchestrator", "Raggrap"]
+exclude = ["venv", "\\.venv", "build", "dist", "Raggrap/research", "Raggrap/Img"]
 
 [[tool.mypy.overrides]]
 module = ["celery.*", "qdrant_client.*", "openai.*", "anthropic.*", "xgboost.*", "torch.*", "sklearn.*"]
+ignore_missing_imports = true
+
+# Optional Raggrap dependencies: the engine falls back to in-memory/deterministic
+# providers at runtime, so these SDKs may be absent under strict CI.
+[[tool.mypy.overrides]]
+module = ["spacy", "chromadb", "neo4j", "redis", "Raggrap.*"]
 ignore_missing_imports = true

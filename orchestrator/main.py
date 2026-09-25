@@ -56,6 +56,7 @@ from orchestrator.billing import (
 from orchestrator.dev_api import router as dev_api_router
 from orchestrator.oauth import build_authorization_url, exchange_code_for_identity
 from orchestrator.pipeline import AnalysisPipeline, CycleResult, run_analysis_cycle
+from orchestrator.raggrap import build_raggrap_engine, raggrap_router
 from orchestrator.store import SignalRecord
 from orchestrator.turnstile import verify_turnstile
 from shared.circuit_breaker import CircuitOpenError
@@ -302,10 +303,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _logger.info("api.startup", environment=settings.environment)
     app.state.settings = settings
     app.state.pipeline = await AnalysisPipeline.build(settings)
+    app.state.rag_engine = build_raggrap_engine(settings) if settings.raggrap_enabled else None
     try:
         yield
     finally:
         await app.state.pipeline.close()
+        if app.state.rag_engine is not None:
+            app.state.rag_engine.close()
         _logger.info("api.shutdown")
 
 
@@ -335,6 +339,8 @@ app.add_middleware(
 )
 
 app.include_router(dev_api_router)
+if _app_settings.raggrap_enabled:
+    app.include_router(raggrap_router)
 
 
 @app.middleware("http")

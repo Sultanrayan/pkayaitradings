@@ -142,6 +142,20 @@ Full list: `.env.example`.
 | GET | `/api/v1/performance` | Signal/decision statistics |
 | GET | `/api/v1/alerts` | `?limit=` risk/news alerts |
 
+### RAG engine (GraphRAG self-improvement layer)
+The Raggrap engine (`Raggrap/`) answers queries while retrieving and applying
+recorded corrections from past mistakes (graph + vector retrieval). It honours
+the main LLM settings so corrections guardrail the same model the agents use.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/raggrap/health` | Backing stores + live provider |
+| POST | `/api/v1/raggrap/query` | `{query, use_cache?, include_explanation?}` → answer with warnings |
+| POST | `/api/v1/raggrap/mistakes` | Record a correction `{concept, description, rule, ...}` |
+| GET | `/api/v1/raggrap/mistakes` | `?limit=` recorded corrections |
+| GET | `/api/v1/raggrap/statistics` | Learning progress (concepts/mistakes/rules) |
+| POST | `/api/v1/raggrap/cache/clear` | Flush cached responses |
+
 ### Execution (paper)
 | Method | Path | Notes |
 |---|---|---|
