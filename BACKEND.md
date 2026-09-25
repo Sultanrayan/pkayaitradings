@@ -71,6 +71,7 @@ Full list: `.env.example`.
 * **Public routes** (no token) — `/health`, `/api/v1/auth/*`, `/api/v1/access/apply`, `/api/v1/agents/capabilities`, `/api/v1/billing/webhook`.
 * **Admin routes** — `/api/v1/admin/*` require a bearer token whose account email is on `ADMIN_EMAILS` (otherwise `403`).
 * **Developer API** — approved developers get a long-lived `scope=developer` token, valid only for `/api/v1/agents/*`.
+* **Local testing** — set `AUTH_REQUIRED=false` to skip the global token gate (the `enforce_auth` middleware short-circuits). Routes that still explicitly depend on a user (billing, admin, analysis, `/api/v1/auth/me`) continue to return `401` without a token.
 
 **Plan enforcement** — `/v1/analysis`, `/api/v1/analyze/*` consume one analysis per call against the caller's plan (Free = 20/mo, Pro = 150/mo, Ultra = unlimited). Exhausted quota returns `402`.
 
