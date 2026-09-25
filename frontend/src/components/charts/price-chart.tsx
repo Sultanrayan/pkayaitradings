@@ -15,7 +15,7 @@ import type {
 
 import { bollinger, ema } from "@/lib/indicators";
 import { toUnixSeconds } from "@/lib/format";
-import type { OhlcBar } from "@/lib/types";
+import type { ChartType, OhlcBar } from "@/lib/types";
 
 export interface ChartOverlays {
   ema20: boolean;
@@ -44,6 +44,7 @@ export interface PriceChartProps {
   levels?: { support?: number | null; resistance?: number | null };
   markers?: ChartMarker[];
   height?: number;
+  chartType?: ChartType;
 }
 
 function toLineData(times: UTCTimestamp[], values: (number | null)[]): LineData<Time>[] {
@@ -55,13 +56,15 @@ function toLineData(times: UTCTimestamp[], values: (number | null)[]): LineData<
   return out;
 }
 
+type PriceSeries = ISeriesApi<"Candlestick" | "Line" | "Area">;
+
 export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function PriceChart(
-  { bars, overlays, levels, markers = [], height = 420 },
+  { bars, overlays, levels, markers = [], height = 420, chartType = "candlestick" },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const priceRef = useRef<PriceSeries | null>(null);
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const ema20Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const ema50Ref = useRef<ISeriesApi<"Line"> | null>(null);
@@ -72,6 +75,7 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
   const priceLinesRef = useRef<IPriceLine[]>([]);
 
   const series = useMemo(() => {
+    const times = bars.map((bar) => toUnixSeconds(bar.openTime) as UTCTimestamp);
     const closes = bars.map((bar) => bar.close);
     return {
       candles: bars.map<CandlestickData<UTCTimestamp>>((bar) => ({
@@ -81,23 +85,15 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
         low: bar.low,
         close: bar.close,
       })),
+      line: toLineData(times, closes),
       volume: bars.map<HistogramData<UTCTimestamp>>((bar) => ({
         time: toUnixSeconds(bar.openTime) as UTCTimestamp,
         value: bar.tickVolume,
         color: bar.close >= bar.open ? "rgba(34,197,94,0.35)" : "rgba(239,68,68,0.35)",
       })),
-      ema20: toLineData(
-        bars.map((bar) => toUnixSeconds(bar.openTime) as UTCTimestamp),
-        ema(closes, 20),
-      ),
-      ema50: toLineData(
-        bars.map((bar) => toUnixSeconds(bar.openTime) as UTCTimestamp),
-        ema(closes, 50),
-      ),
-      ema200: toLineData(
-        bars.map((bar) => toUnixSeconds(bar.openTime) as UTCTimestamp),
-        ema(closes, 200),
-      ),
+      ema20: toLineData(times, ema(closes, 20)),
+      ema50: toLineData(times, ema(closes, 50)),
+      ema200: toLineData(times, ema(closes, 200)),
       bb: bollinger(closes, 20, 2),
     };
   }, [bars]);
@@ -129,8 +125,15 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
     let resizeObserver: ResizeObserver | null = null;
 
     void (async () => {
-      const { createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType, createSeriesMarkers } =
-        await import("lightweight-charts");
+      const {
+        createChart,
+        CandlestickSeries,
+        AreaSeries,
+        HistogramSeries,
+        LineSeries,
+        ColorType,
+        createSeriesMarkers,
+      } = await import("lightweight-charts");
       if (disposed || !containerRef.current) return;
 
       const chart = createChart(containerRef.current, {
@@ -151,13 +154,29 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
         localization: { locale: "en-US" },
       });
 
-      const candle = chart.addSeries(CandlestickSeries, {
-        upColor: "#22c55e",
-        downColor: "#ef4444",
-        borderVisible: false,
-        wickUpColor: "#22c55e",
-        wickDownColor: "#ef4444",
-      });
+      let price: PriceSeries;
+      if (chartType === "candlestick") {
+        price = chart.addSeries(CandlestickSeries, {
+          upColor: "#22c55e",
+          downColor: "#ef4444",
+          borderVisible: false,
+          wickUpColor: "#22c55e",
+          wickDownColor: "#ef4444",
+        });
+      } else if (chartType === "area") {
+        price = chart.addSeries(AreaSeries, {
+          lineColor: "#22c55e",
+          topColor: "rgba(34,197,94,0.25)",
+          bottomColor: "rgba(34,197,94,0.02)",
+          lineWidth: 2,
+        });
+      } else {
+        price = chart.addSeries(LineSeries, {
+          color: "#22c55e",
+          lineWidth: 2,
+        });
+      }
+
       const volume = chart.addSeries(HistogramSeries, {
         priceFormat: { type: "volume" },
         priceScaleId: "",
@@ -171,19 +190,19 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
       const bbLower = chart.addSeries(LineSeries, lineOptions("#52525b", 1));
 
       chartRef.current = chart;
-      candleRef.current = candle;
+      priceRef.current = price;
       volumeRef.current = volume;
       ema20Ref.current = ema20;
       ema50Ref.current = ema50;
       ema200Ref.current = ema200;
       bbUpperRef.current = bbUpper;
       bbLowerRef.current = bbLower;
-      markerRef.current = createSeriesMarkers(candle, []) as unknown as {
+      markerRef.current = createSeriesMarkers(price as ISeriesApi<"Candlestick">, []) as unknown as {
         setMarkers: (markers: SeriesMarker<Time>[]) => void;
       };
 
       const data = dataRef.current;
-      candle.setData(data.candles);
+      setPriceData(price, data, chartType);
       volume.setData(data.volume);
       ema20.setData(data.ema20);
       ema50.setData(data.ema50);
@@ -204,7 +223,7 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
       resizeObserver?.disconnect();
       chartRef.current?.remove();
       chartRef.current = null;
-      candleRef.current = null;
+      priceRef.current = null;
       volumeRef.current = null;
       ema20Ref.current = null;
       ema50Ref.current = null;
@@ -214,18 +233,18 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
       markerRef.current = null;
       priceLinesRef.current = [];
     };
-  }, [height]);
+  }, [height, chartType]);
 
   useEffect(() => {
     const data = dataRef.current;
-    candleRef.current?.setData(data.candles);
+    if (priceRef.current) setPriceData(priceRef.current, data, chartType);
     volumeRef.current?.setData(data.volume);
     ema20Ref.current?.setData(data.ema20);
     ema50Ref.current?.setData(data.ema50);
     ema200Ref.current?.setData(data.ema200);
     bbUpperRef.current?.setData(toLineData(timesRef.current, data.bb.upper));
     bbLowerRef.current?.setData(toLineData(timesRef.current, data.bb.lower));
-  }, [series]);
+  }, [series, chartType]);
 
   useEffect(() => {
     ema20Ref.current?.applyOptions({ visible: overlays.ema20 });
@@ -237,13 +256,13 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
   }, [overlays]);
 
   useEffect(() => {
-    const candle = candleRef.current;
-    if (!candle) return;
-    for (const line of priceLinesRef.current) candle.removePriceLine(line);
+    const price = priceRef.current;
+    if (!price) return;
+    for (const line of priceLinesRef.current) price.removePriceLine(line);
     priceLinesRef.current = [];
     if (levels?.resistance) {
       priceLinesRef.current.push(
-        candle.createPriceLine({
+        price.createPriceLine({
           price: levels.resistance,
           color: "#ef4444",
           lineWidth: 1,
@@ -255,7 +274,7 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
     }
     if (levels?.support) {
       priceLinesRef.current.push(
-        candle.createPriceLine({
+        price.createPriceLine({
           price: levels.support,
           color: "#22c55e",
           lineWidth: 1,
@@ -281,6 +300,18 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
 
   return <div ref={containerRef} className="w-full" />;
 });
+
+function setPriceData(
+  price: PriceSeries,
+  data: { candles: CandlestickData<UTCTimestamp>[]; line: LineData<Time>[] },
+  chartType: ChartType,
+) {
+  if (chartType === "candlestick") {
+    (price as ISeriesApi<"Candlestick">).setData(data.candles);
+  } else {
+    (price as ISeriesApi<"Line" | "Area">).setData(data.line);
+  }
+}
 
 function lineOptions(color: string, width: 1 | 2 | 3 | 4) {
   return {

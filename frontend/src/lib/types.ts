@@ -20,6 +20,12 @@ export type AlertLevel = "NONE" | "MONITOR" | "REDUCE_POSITION_SIZE" | "HALT_TRA
 export type Decision = "BUY" | "SELL" | "WAIT" | "SKIP";
 export type Timeframe = "M1" | "M5" | "M15" | "M30" | "H1" | "H4" | "D1";
 
+/** Timeframes the chart UI exposes (weekly/monthly are aggregated client-side). */
+export type ChartTimeframe = Timeframe | "W1" | "MN";
+
+/** Main chart representation. */
+export type ChartType = "candlestick" | "line" | "area";
+
 export interface Tick {
   symbol: string;
   description: string;

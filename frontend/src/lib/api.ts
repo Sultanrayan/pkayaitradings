@@ -115,6 +115,22 @@ export const api = {
       `/api/v1/ohlc/${encodeURIComponent(symbol)}?interval=${interval}&limit=${limit}`,
     ),
 
+  /** Ask the Raggrap self-improvement engine (context-aware AI assistant). */
+  raggrapQuery: (query: string, useCache = true) =>
+    request<{
+      query: string;
+      answer: string;
+      warnings_applied: string[];
+      was_corrected: boolean;
+      cached: boolean;
+      timestamp: string;
+      reasoning: string | null;
+    }>(`/api/v1/raggrap/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, use_cache: useCache, include_explanation: false }),
+    }),
+
   analyze: (symbol: string, timeframes: Timeframe[]) => {
     const query = timeframes.length ? `?timeframes=${timeframes.join(",")}` : "";
     return request<CycleResponse>(

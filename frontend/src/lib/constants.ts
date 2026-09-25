@@ -1,7 +1,36 @@
-import type { Timeframe } from "@/lib/types";
+import type { ChartTimeframe, Timeframe } from "@/lib/types";
 
 /** Timeframes the backend supports for OHLC (biquote M1–D1). */
 export const CHART_TIMEFRAMES: Timeframe[] = ["M1", "M5", "M15", "H1", "H4", "D1"];
+
+/**
+ * Timeframes exposed in the trading UI. Weekly and monthly are served by
+ * aggregating daily candles client-side (biquote only retains M1–D1).
+ */
+export const MARKET_TIMEFRAMES: Array<{ value: ChartTimeframe; label: string }> = [
+  { value: "M1", label: "1m" },
+  { value: "M5", label: "5m" },
+  { value: "M15", label: "15m" },
+  { value: "M30", label: "30m" },
+  { value: "H1", label: "1H" },
+  { value: "H4", label: "4H" },
+  { value: "D1", label: "1D" },
+  { value: "W1", label: "1W" },
+  { value: "MN", label: "1M" },
+];
+
+/** Map a chart timeframe to the backend interval to fetch (W1/MN build on D1). */
+export const TIMEFRAME_SOURCE: Record<ChartTimeframe, Timeframe> = {
+  M1: "M1",
+  M5: "M5",
+  M15: "M15",
+  M30: "M30",
+  H1: "H1",
+  H4: "H4",
+  D1: "D1",
+  W1: "D1",
+  MN: "D1",
+};
 
 /** Default multi-timeframe set used for an analysis cycle. */
 export const ANALYSIS_TIMEFRAMES: Timeframe[] = ["M5", "H1", "H4"];

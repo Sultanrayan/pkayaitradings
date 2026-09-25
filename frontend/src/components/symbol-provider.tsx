@@ -5,14 +5,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { useTicks, type StreamStatus } from "@/hooks/use-ticks";
 import { api } from "@/lib/api";
 import { DEFAULT_SYMBOLS } from "@/lib/constants";
-import type { Tick, Timeframe } from "@/lib/types";
+import type { ChartTimeframe, Tick } from "@/lib/types";
 
 interface SymbolContextValue {
   symbols: string[];
   symbol: string;
   setSymbol: (symbol: string) => void;
-  timeframe: Timeframe;
-  setTimeframe: (timeframe: Timeframe) => void;
+  timeframe: ChartTimeframe;
+  setTimeframe: (timeframe: ChartTimeframe) => void;
   ticks: Record<string, Tick>;
   status: StreamStatus;
   lastUpdate: number | null;
@@ -25,7 +25,7 @@ const SymbolContext = createContext<SymbolContextValue | null>(null);
 export function SymbolProvider({ children }: { children: React.ReactNode }) {
   const [symbols, setSymbols] = useState<string[]>(DEFAULT_SYMBOLS);
   const [symbol, setSymbol] = useState(DEFAULT_SYMBOLS[0]);
-  const [timeframe, setTimeframe] = useState<Timeframe>("H1");
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>("H1");
   const [environment, setEnvironment] = useState("development");
 
   const { ticks, status, lastUpdate } = useTicks(symbols);

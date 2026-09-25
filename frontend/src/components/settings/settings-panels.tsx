@@ -19,13 +19,13 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { useProfile } from "@/hooks/use-profile";
-import { CHART_TIMEFRAMES } from "@/lib/constants";
+import { MARKET_TIMEFRAMES } from "@/lib/constants";
 import { saveProfile, type Profile } from "@/lib/profile";
-import type { Timeframe } from "@/lib/types";
+import type { ChartTimeframe } from "@/lib/types";
 
 interface Preferences {
   defaultSymbol: string;
-  defaultTimeframe: Timeframe;
+  defaultTimeframe: ChartTimeframe;
   confidenceThreshold: number;
   notifyEmail: boolean;
   notifyTelegram: boolean;
@@ -164,16 +164,16 @@ export function SettingsPanels({ onSignOut }: { onSignOut?: () => void }) {
               <Select
                 value={preferences.defaultTimeframe}
                 onValueChange={(value) =>
-                  setPreferences((prev) => ({ ...prev, defaultTimeframe: value as Timeframe }))
+                  setPreferences((prev) => ({ ...prev, defaultTimeframe: value as ChartTimeframe }))
                 }
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {CHART_TIMEFRAMES.map((item) => (
-                    <SelectItem key={item} value={item}>
-                      {item}
+                  {MARKET_TIMEFRAMES.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
