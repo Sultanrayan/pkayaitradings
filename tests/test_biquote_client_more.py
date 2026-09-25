@@ -184,6 +184,49 @@ async def test_get_ohlc_with_range(settings: Settings) -> None:
 
 
 @respx.mock
+async def test_get_ohlc_accumulates_history_across_requests(settings: Settings) -> None:
+    """Successive fetches return a growing, stable series (few-candles fix)."""
+    first = [
+        {
+            "openTime": "2026-02-24T11:00:00Z",
+            "open": 1.0,
+            "high": 2.0,
+            "low": 0.5,
+            "close": 1.5,
+            "volume": 0,
+            "tickVolume": 10,
+            "isOpen": False,
+        }
+    ]
+    second = [
+        {
+            "openTime": "2026-02-24T12:00:00Z",
+            "open": 2.0,
+            "high": 3.0,
+            "low": 1.0,
+            "close": 2.5,
+            "volume": 0,
+            "tickVolume": 20,
+            "isOpen": False,
+        },
+        first[0],
+    ]
+    respx.get(f"{BASE}/api/XAUUSD/ohlc").mock(
+        side_effect=[
+            httpx.Response(200, json={"symbol": "XAUUSD", "interval": "1h", "bars": first}),
+            httpx.Response(200, json={"symbol": "XAUUSD", "interval": "1h", "bars": second}),
+        ]
+    )
+    async with BiquoteClient(settings) as client:
+        series_a = await client.get_ohlc("XAUUSD", interval=Timeframe.H1, limit=10)
+        series_b = await client.get_ohlc("XAUUSD", interval=Timeframe.H1, limit=10)
+
+    assert len(series_a.bars) == 1
+    assert len(series_b.bars) == 2
+    assert [bar.close for bar in series_b.bars] == [1.5, 2.5]
+
+
+@respx.mock
 async def test_get_ohlc_rejects_bad_limit(settings: Settings) -> None:
     async with BiquoteClient(settings) as client:
         with pytest.raises(ValueError):

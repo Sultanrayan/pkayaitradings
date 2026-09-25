@@ -31,6 +31,7 @@ from data_pipeline.errors import (
     BiquoteRateLimitedError,
     BiquoteUnavailableError,
 )
+from data_pipeline.ohlc_store import OhlcStore
 from shared.config import Settings, get_settings
 from shared.logging import get_logger
 from shared.schemas.enums import Impact, Timeframe
@@ -64,6 +65,8 @@ class BiquoteClient:
         self,
         settings: Settings | None = None,
         client: httpx.AsyncClient | None = None,
+        *,
+        ohlc_store: OhlcStore | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._base_url = self._settings.biquote_base_url.rstrip("/")
@@ -79,6 +82,9 @@ class BiquoteClient:
             max_calls=self._settings.biquote_requests_per_minute,
             period_seconds=60.0,
         )
+        # Accumulates candle history so chart consumers get a stable, growing
+        # series instead of biquote's shallow, sliding intraday window.
+        self._ohlc_store = ohlc_store or OhlcStore()
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -312,11 +318,21 @@ class BiquoteClient:
         raw_bars = payload.get("bars", []) if isinstance(payload, dict) else payload
         bars = [OhlcBar.model_validate(bar) for bar in raw_bars]
         bars.reverse()
-        return OhlcSeries(
-            symbol=payload.get("symbol", symbol.upper()),
-            interval=payload.get("interval", interval.biquote_interval),
-            bars=tuple(bars),
-        )
+
+        symbol_name = str(payload.get("symbol", symbol.upper()))
+        interval_name = str(payload.get("interval", interval.biquote_interval))
+
+        # Historical range queries return exactly the requested slice, but are
+        # still persisted so they enrich later "latest" requests.
+        if start is not None or end is not None:
+            self._ohlc_store.upsert(symbol_name, interval_name, bars)
+            return OhlcSeries(symbol=symbol_name, interval=interval_name, bars=tuple(bars))
+
+        # Streamed "latest" fetches merge into the local accumulator so the
+        # chart gets a stable, growing window instead of biquote's shallow
+        # history that slides on every request.
+        merged = self._ohlc_store.merge(symbol_name, interval_name, bars, limit=limit)
+        return OhlcSeries(symbol=symbol_name, interval=interval_name, bars=tuple(merged))
 
     # ------------------------------------------------------------------ #
     # Market statistics

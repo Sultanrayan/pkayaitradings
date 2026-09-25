@@ -132,6 +132,8 @@ Full list: `.env.example`.
 | GET | `/api/v1/market/movers` | `?kind=gainers\|losers\|most-active&limit=` |
 | GET | `/api/v1/market/summary` | Market snapshot |
 
+> **OHLC depth:** biquote only retains a short intraday history window (e.g. ~5h of M1, ~7d of H1), so a naive fetch returns few candles. The backend now accumulates every fetched series in an in-process store keyed by `(symbol, interval)` and serves a stable, growing window — older bars no longer slide out on each request. The store is per-process (memory), resets on restart, and can be re-seeded — run an analysis cycle or hit `/api/v1/ohlc` after new bars form to grow it.
+
 ### Signals / agents / analytics
 | Method | Path | Notes |
 |---|---|---|
