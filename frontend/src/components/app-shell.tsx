@@ -8,12 +8,12 @@ import { BotSupports } from "@/components/bot/bot-supports";
 
 /**
  * Application shell: fixed top navigation, scrollable content and the global
- * floating Bot Supports launcher. The dashboard route renders full-bleed so the
- * chart fills the viewport (navbar/logo/profile/bell stay fixed on top).
+ * floating Bot Supports launcher. Full-bleed routes (dashboard, AI chat) fill
+ * the viewport so their content can size to the window (navbar stays fixed).
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const fullscreen = pathname === "/dashboard";
+  const fullscreen = pathname === "/dashboard" || pathname === "/ai";
 
   return (
     <div className="min-h-dvh w-full">
