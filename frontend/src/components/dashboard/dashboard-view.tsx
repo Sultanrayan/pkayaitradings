@@ -1,7 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Camera, Maximize2, Minimize2, ZoomIn } from "lucide-react";
+
+import btcImg from "../../../img/btc.png";
+import goldImg from "../../../img/gold.png";
 
 import { PriceChart, type ChartMarker, type ChartOverlays, type PriceChartHandle } from "@/components/charts/price-chart";
 import { IndicatorChart } from "@/components/charts/indicator-chart";
@@ -22,6 +26,7 @@ import { useWatchlist } from "@/hooks/use-watchlist";
 import { atr, bollinger, ema, macd, rsi, stochastic } from "@/lib/indicators";
 import { cn } from "cn";
 import { formatPrice, formatSignedPercent } from "@/lib/format";
+import type { StaticImageData } from "next/image";
 import type { ChartType, OhlcBar, SignalRecord } from "@/lib/types";
 
 const CHART_TYPES: Array<{ key: ChartType; label: string; icon: string }> = [
@@ -29,6 +34,13 @@ const CHART_TYPES: Array<{ key: ChartType; label: string; icon: string }> = [
   { key: "line", label: "Line", icon: "—" },
   { key: "area", label: "Area", icon: "◔" },
 ];
+
+/** Demo symbol image (from frontend/img) used as the price badge. */
+function symbolBadge(symbol: string): StaticImageData {
+  if (symbol.toUpperCase().startsWith("XAU")) return goldImg;
+  if (symbol.toUpperCase().startsWith("BTC")) return btcImg;
+  return goldImg;
+}
 
 function snapToBar(bars: OhlcBar[], iso: string): number | null {
   if (!bars.length) return null;
@@ -163,9 +175,14 @@ export function DashboardView() {
       <div className="flex flex-wrap items-center gap-2 border-b border-border bg-card px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           {demo ? (
-            <span className="rounded-full border border-gold/40 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-gold">
-              Demo
-            </span>
+            <Image
+              src={symbolBadge(symbol)}
+              alt={symbol}
+              width={24}
+              height={24}
+              className="size-6 rounded-full object-cover"
+              priority
+            />
           ) : null}
           <span className="tabular text-sm font-semibold">{formatPrice(effectiveTick?.mid)}</span>
           <span className={cn("tabular text-xs font-medium", changeTone)}>{formatSignedPercent(change)}</span>
