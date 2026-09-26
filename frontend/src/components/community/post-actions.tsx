@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   BookmarkIcon,
   HeartIcon,
@@ -187,11 +187,14 @@ export function MoreMenu({
 export function InlineReplyComposer({
   onSubmit,
   placeholder = "Write a reply…",
+  autoFocus = false,
 }: {
   onSubmit: (text: string) => void;
   placeholder?: string;
+  autoFocus?: boolean;
 }) {
   const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const submit = () => {
     if (!draft.trim()) return;
     onSubmit(draft);
@@ -200,6 +203,8 @@ export function InlineReplyComposer({
   return (
     <div className="flex items-center gap-2">
       <input
+        ref={inputRef}
+        autoFocus={autoFocus}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => {

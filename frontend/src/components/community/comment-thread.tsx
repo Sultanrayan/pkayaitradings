@@ -115,6 +115,7 @@ function ReplyBody({
         {replying && !deleted ? (
           <div className="mt-2 pl-2">
             <InlineReplyComposer
+              autoFocus
               placeholder={`Reply to @${author?.handle ?? "post"}…`}
               onSubmit={(text) => {
                 onReply(comment.id, text);
@@ -138,6 +139,7 @@ export function CommentThread({
   me,
   usersById,
   topPlaceholder = "Add a comment…",
+  autoFocusComposer = false,
   onTopReply,
   onReplyToComment,
   onLike,
@@ -149,6 +151,7 @@ export function CommentThread({
   me: SocialUser;
   usersById: (id: string) => SocialUser | undefined;
   topPlaceholder?: string;
+  autoFocusComposer?: boolean;
   onTopReply: (text: string) => void;
   onReplyToComment: (commentId: string, text: string) => void;
   onLike: (commentId: string) => void;
@@ -200,8 +203,12 @@ export function CommentThread({
   };
 
   return (
-    <div className="space-y-3 border-t border-border bg-muted/20 px-4 py-3">
-      <InlineReplyComposer placeholder={topPlaceholder} onSubmit={onTopReply} />
+    <div className="space-y-3 border-t border-border bg-muted/20 px-4 py-3" role="region" aria-label="Comments">
+      <InlineReplyComposer
+        autoFocus={autoFocusComposer}
+        placeholder={topPlaceholder}
+        onSubmit={onTopReply}
+      />
       {topLevel.length === 0 ? (
         <p className="text-xs text-muted-foreground">No comments yet — start the discussion.</p>
       ) : (

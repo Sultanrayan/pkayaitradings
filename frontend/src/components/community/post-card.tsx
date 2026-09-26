@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { MessageCircleIcon, UserPlusIcon, UserCheckIcon } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { cn } from "cn";
 
 import {
@@ -213,14 +214,33 @@ export function PostCard({
   defaultThreadOpen?: boolean;
 }) {
   const [threadOpen, setThreadOpen] = useState(defaultThreadOpen);
+  const [focusComposer, setFocusComposer] = useState(false);
   const mine = post.authorId === me.id;
 
   const commentCount = useMemo(() => comments.length, [comments]);
 
+  const openThread = (focus = false) => {
+    setThreadOpen(true);
+    if (focus) setFocusComposer(true);
+  };
+
+  const toggleThread = () => {
+    if (threadOpen) {
+      setThreadOpen(false);
+      setFocusComposer(false);
+    } else {
+      openThread(true);
+    }
+  };
+
   return (
     <Card className="w-full gap-0 py-0 ring-border">
-      <CardHeader className="-mb-1 flex-row items-center gap-2.5 px-4 pt-3">
-        <button type="button" onClick={() => onOpenProfile(post.authorId)}>
+      <CardHeader className="flex items-center gap-2.5 px-4 pt-3">
+        <button
+          type="button"
+          onClick={() => onOpenProfile(post.authorId)}
+          className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
           <UserAvatar user={author ?? { name: "Unknown", avatar: null }} />
         </button>
         <div className="min-w-0 flex-1">
@@ -229,7 +249,7 @@ export function PostCard({
             onClick={() => onOpenProfile(post.authorId)}
             className="flex min-w-0 items-center gap-1 text-left"
           >
-            <span className="truncate text-sm font-medium">{author?.name ?? "Unknown"}</span>
+            <span className="truncate text-sm font-semibold">{author?.name ?? "Unknown"}</span>
             {author?.verified ? <VerifiedBadge /> : null}
           </button>
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -242,7 +262,7 @@ export function PostCard({
           <Button
             size="sm"
             variant={isFollowing ? "outline" : "default"}
-            className="gap-1"
+            className="ml-auto shrink-0 gap-1"
             onClick={() => onToggleFollow(post.authorId)}
           >
             {isFollowing ? (
@@ -285,7 +305,7 @@ export function PostCard({
             reposts: post.reposts,
           }}
           onLike={() => onLike(post.id)}
-          onComment={() => setThreadOpen((value) => !value)}
+          onComment={toggleThread}
           onRepost={() => onRepost(post.id)}
           onQuote={() => onQuote(post.id)}
           onShare={() => onShare(post.id)}
@@ -294,7 +314,7 @@ export function PostCard({
         {commentCount > 0 && !threadOpen ? (
           <button
             type="button"
-            onClick={() => setThreadOpen(true)}
+            onClick={() => openThread(true)}
             className="flex items-center gap-1.5 px-3 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
           >
             <MessageCircleIcon className="size-3.5" />
@@ -303,20 +323,35 @@ export function PostCard({
         ) : null}
       </CardFooter>
 
-      {threadOpen ? (
-        <CommentThread
-          comments={comments}
-          me={me}
-          usersById={usersById}
-          topPlaceholder="Add a comment…"
-          onTopReply={(text) => onAddComment(post.id, text)}
-          onReplyToComment={(commentId, text) => onReplyToComment(post.id, commentId, text)}
-          onLike={(commentId) => onToggleCommentLike(commentId, post.id)}
-          onRepost={(commentId) => onToggleCommentRepost(commentId, post.id)}
-          onDelete={(commentId) => onDeleteComment(commentId, post.id)}
-          onReport={(commentId) => onReportComment(commentId, post.id)}
-        />
-      ) : null}
+      <AnimatePresence>
+        {threadOpen ? (
+          <motion.div
+            key="comment-thread"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: "easeInOut" }}
+            className="overflow-hidden"
+          >
+            <CommentThread
+              comments={comments}
+              me={me}
+              usersById={usersById}
+              topPlaceholder="Add a comment…"
+              autoFocusComposer={focusComposer}
+              onTopReply={(text) => {
+                onAddComment(post.id, text);
+                setFocusComposer(false);
+              }}
+              onReplyToComment={(commentId, text) => onReplyToComment(post.id, commentId, text)}
+              onLike={(commentId) => onToggleCommentLike(commentId, post.id)}
+              onRepost={(commentId) => onToggleCommentRepost(commentId, post.id)}
+              onDelete={(commentId) => onDeleteComment(commentId, post.id)}
+              onReport={(commentId) => onReportComment(commentId, post.id)}
+            />
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </Card>
   );
 }
