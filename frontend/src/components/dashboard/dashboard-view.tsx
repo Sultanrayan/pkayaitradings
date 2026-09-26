@@ -1,12 +1,17 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { Camera, Maximize2, Minimize2, Settings2, ZoomIn } from "lucide-react";
+import { Camera, Maximize2, Minimize2, ZoomIn } from "lucide-react";
 
 import { PriceChart, type ChartMarker, type ChartOverlays, type PriceChartHandle } from "@/components/charts/price-chart";
 import { IndicatorChart } from "@/components/charts/indicator-chart";
 import { PairSelector } from "@/components/trading/pair-selector";
 import { TimeframeSelector } from "@/components/trading/timeframe-selector";
+import {
+  IndicatorsMenu,
+  INDICATOR_ITEMS,
+  type IndicatorKey,
+} from "@/components/trading/indicators-menu";
 import { useMarketContext } from "@/components/symbol-provider";
 import { Button } from "@/components/ui/button";
 import { ErrorNote, EmptyState, LoadingRows } from "@/components/shared/primitives";
@@ -24,23 +29,6 @@ const CHART_TYPES: Array<{ key: ChartType; label: string; icon: string }> = [
   { key: "line", label: "Line", icon: "—" },
   { key: "area", label: "Area", icon: "◔" },
 ];
-
-const OVERLAY_LABELS: Array<{ key: keyof ChartOverlays; label: string; color: string }> = [
-  { key: "ema20", label: "EMA 20", color: "#eab308" },
-  { key: "ema50", label: "EMA 50", color: "#3b82f6" },
-  { key: "ema200", label: "EMA 200", color: "#a855f7" },
-  { key: "bollinger", label: "Bollinger", color: "#52525b" },
-  { key: "volume", label: "Volume", color: "#71717a" },
-];
-
-const INDICATOR_LABELS = [
-  { key: "rsi", label: "RSI" },
-  { key: "macd", label: "MACD" },
-  { key: "atr", label: "ATR" },
-  { key: "stochastic", label: "Stochastic" },
-] as const;
-
-type IndicatorKey = (typeof INDICATOR_LABELS)[number]["key"];
 
 function snapToBar(bars: OhlcBar[], iso: string): number | null {
   if (!bars.length) return null;
@@ -97,8 +85,8 @@ export function DashboardView() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [chartType, setChartType] = useState<ChartType>("candlestick");
-  const [settingsOpen, setSettingsOpen] = useState(false);
 
+  // No indicators on by default – they are revealed via the Indicators dropdown.
   const [overlays, setOverlays] = useState<ChartOverlays>({
     ema20: true,
     ema50: true,
@@ -107,8 +95,8 @@ export function DashboardView() {
     volume: true,
   });
   const [indicators, setIndicators] = useState<Record<IndicatorKey, boolean>>({
-    rsi: true,
-    macd: true,
+    rsi: false,
+    macd: false,
     atr: false,
     stochastic: false,
   });
@@ -167,17 +155,15 @@ export function DashboardView() {
   const change = effectiveTick?.dayDiffPercent ?? null;
   const changeTone = change === null ? "text-muted-foreground" : change >= 0 ? "text-bull" : "text-bear";
 
-  const panesOn = INDICATOR_LABELS.some((indicator) => indicators[indicator.key]);
+  const indicatorsOn = INDICATOR_ITEMS.some((indicator) => indicators[indicator.key]);
 
   return (
     <div className="flex h-full flex-col">
-      {/* Top bar: pair + timeframe (dropdown-only), price, chart controls */}
+      {/* App bar: pair, price, chart actions */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border bg-card px-3 py-2">
         <PairSelector assets={demo ? demoMarket?.symbols : undefined} />
-        <span className="mx-1 h-4 w-px bg-border" />
-        <TimeframeSelector />
 
-        <div className="ml-2 flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           {demo ? (
             <span className="rounded-full border border-gold/40 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-gold">
               Demo
@@ -218,9 +204,6 @@ export function DashboardView() {
               </button>
             ))}
           </div>
-          <Button variant="ghost" size="icon" title="Chart settings" aria-label="Chart settings" onClick={() => setSettingsOpen((v) => !v)}>
-            <Settings2 className={cn("size-4", settingsOpen && "text-foreground")} />
-          </Button>
           <Button variant="ghost" size="icon" title="Fit content" aria-label="Fit content" onClick={() => chartRef.current?.fitContent()}>
             <ZoomIn className="size-4" />
           </Button>
@@ -233,40 +216,21 @@ export function DashboardView() {
         </div>
       </div>
 
-      {/* Collapsible settings: overlays + indicator panes */}
-      {settingsOpen ? (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border bg-muted/30 px-3 py-1.5 text-xs">
-          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Overlays</span>
-          {OVERLAY_LABELS.map((overlay) => (
-            <button
-              key={overlay.key}
-              type="button"
-              onClick={() => toggleOverlay(overlay.key)}
-              className={cn(
-                "flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] transition-colors",
-                overlays[overlay.key] ? "border-border bg-accent text-foreground" : "border-border text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <span className="size-1.5 rounded-full" style={{ background: overlay.color }} />
-              {overlay.label}
-            </button>
-          ))}
-          <span className="ml-2 text-[11px] uppercase tracking-wider text-muted-foreground">Panes</span>
-          {INDICATOR_LABELS.map((indicator) => (
-            <button
-              key={indicator.key}
-              type="button"
-              onClick={() => toggleIndicator(indicator.key)}
-              className={cn(
-                "rounded-full border px-2 py-0.5 text-[11px] transition-colors",
-                indicators[indicator.key] ? "border-border bg-accent text-foreground" : "border-border text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {indicator.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
+      {/* Chart toolbar: timeframe + indicators dropdowns */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/20 px-3 py-1.5">
+        <TimeframeSelector />
+        <IndicatorsMenu
+          overlays={overlays}
+          indicators={indicators}
+          onToggleOverlay={toggleOverlay}
+          onToggleIndicator={toggleIndicator}
+        />
+        {indicatorsOn ? (
+          <span className="ml-auto text-[11px] uppercase tracking-wider text-muted-foreground">
+            Indicator panes shown — use the menu to hide
+          </span>
+        ) : null}
+      </div>
 
       {!demo && error ? (
         <div className="px-3 py-2">
@@ -274,17 +238,19 @@ export function DashboardView() {
         </div>
       ) : null}
 
-      {/* Chart fills the remaining screen height; panes shrink it when enabled */}
-      <div ref={containerRef} className="relative flex min-h-0 flex-1 flex-col bg-card">
+      {/* Chart fills the remaining screen height */}
+      <div ref={containerRef} className="relative min-h-0 flex-1">
         {!demo && loading && bars.length === 0 ? (
-          <LoadingRows rows={6} className="h-full" />
+          <div className="h-full">
+            <LoadingRows rows={6} className="h-full" />
+          </div>
         ) : bars.length === 0 ? (
           <div className="flex h-full items-center justify-center p-4">
             <EmptyState>No candle data available for {symbol}.</EmptyState>
           </div>
         ) : (
-          <>
-            <div className={cn("min-h-0 w-full", panesOn ? "flex-[3]" : "flex-1")}>
+          <div className="flex h-full flex-col">
+            <div className="min-h-0 flex-1">
               <PriceChart
                 ref={chartRef}
                 bars={bars}
@@ -296,8 +262,8 @@ export function DashboardView() {
               />
             </div>
 
-            {panesOn ? (
-              <div className="max-h-[45%] w-full shrink-0 overflow-y-auto border-t border-border">
+            {indicatorsOn ? (
+              <div className="max-h-[40%] w-full shrink-0 overflow-y-auto border-t border-border">
                 {computed && indicators.rsi ? (
                   <IndicatorChart title="RSI (14)" bars={bars} references={[30, 70]} lines={[{ label: "RSI", color: "#eab308", values: computed.rsi }]} />
                 ) : null}
@@ -329,7 +295,7 @@ export function DashboardView() {
                 ) : null}
               </div>
             ) : null}
-          </>
+          </div>
         )}
       </div>
     </div>
