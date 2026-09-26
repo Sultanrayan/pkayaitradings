@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Menu, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { Menu, Plus, Trash2, X } from "lucide-react";
 import { cn } from "cn";
 
 import { PromptInput, type PromptMeta } from "@/components/ui/ai-chat-input";
@@ -181,7 +181,6 @@ export function AiView() {
             isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
           )}
         >
-          <Sparkles className={cn("size-3.5 shrink-0", isActive ? "text-gold" : "text-muted-foreground")} />
           <span className="truncate">{chat.title}</span>
         </button>
         <button
@@ -198,7 +197,7 @@ export function AiView() {
 
   const sidebar = (
     <div className="flex h-full flex-col gap-2 p-3">
-      <Button className="w-full justify-start gap-2" onClick={newChat}>
+      <Button variant="outline" className="w-full justify-start gap-2" onClick={newChat}>
         <Plus className="size-4" />
         New Chat
       </Button>
