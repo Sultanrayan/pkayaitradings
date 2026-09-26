@@ -21,7 +21,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main
         className={cn(
           fullscreen
-            ? "h-[calc(100dvh-3.5rem)] w-full overflow-hidden"
+            ? "h-dvh w-full overflow-hidden"
             : "mx-auto w-full max-w-[1600px] px-4 pb-16 pt-20 md:px-6",
         )}
       >

@@ -158,11 +158,9 @@ export function DashboardView() {
   const indicatorsOn = INDICATOR_ITEMS.some((indicator) => indicators[indicator.key]);
 
   return (
-    <div className="flex h-full flex-col">
-      {/* App bar: pair, price, chart actions */}
+    <div className="flex h-full flex-col pt-14 pb-3">
+      {/* App bar: price, chart actions */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border bg-card px-3 py-2">
-        <PairSelector assets={demo ? demoMarket?.symbols : undefined} />
-
         <div className="flex min-w-0 items-center gap-2">
           {demo ? (
             <span className="rounded-full border border-gold/40 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-gold">
@@ -216,8 +214,9 @@ export function DashboardView() {
         </div>
       </div>
 
-      {/* Chart toolbar: timeframe + indicators dropdowns */}
+      {/* Chart toolbar: pair, timeframe, indicators dropdowns */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/20 px-3 py-1.5">
+        <PairSelector assets={demo ? demoMarket?.symbols : undefined} />
         <TimeframeSelector />
         <IndicatorsMenu
           overlays={overlays}
