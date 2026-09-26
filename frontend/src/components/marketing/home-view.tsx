@@ -13,6 +13,7 @@ import {
 
 import { FooterSection } from "@/components/marketing/footer-section";
 import { FeaturesSection } from "@/components/marketing/features-section";
+import { IntegrationCard } from "@/components/marketing/integration-card";
 import { ResponsiveHeroBanner } from "@/components/marketing/responsive-hero-banner";
 import { PipelineStepper, type StepperStep } from "@/components/marketing/stepper";
 import { useAuth } from "@/components/auth-provider";
@@ -39,21 +40,6 @@ const STEPS = [
     icon: Zap,
     title: "4. Decide and execute",
     body: "The Decision Maker combines the signals. If the score is high enough, the trade is placed.",
-  },
-];
-
-const HIGHLIGHTS = [
-  {
-    title: "Four agents, one decision",
-    body: "The Technical Analyst, News Monitor, Risk Manager, and Decision Maker all vote. The Risk Manager can veto.",
-  },
-  {
-    title: "Live market data",
-    body: "Prices come from biquote over a live connection. Candles, the calendar, and headlines are included.",
-  },
-  {
-    title: "Risk comes first",
-    body: "Position size, stop loss, drawdown limits, and VaR are checked before any trade is made.",
   },
 ];
 
@@ -171,16 +157,53 @@ export function HomeView() {
       {/* Features (below How it works) */}
       <FeaturesSection />
 
-      {/* Capabilities */}
+      {/* Capabilities — component style on the left, text on the right */}
       <section id="capabilities" className="border-y border-border bg-card/40">
         <div className="mx-auto max-w-6xl px-6 py-24">
-          <div className="grid gap-6 md:grid-cols-3">
-            {HIGHLIGHTS.map((item) => (
-              <div key={item.title} className="rounded-2xl border border-border bg-card p-6">
-                <h2 className="text-base font-medium">{item.title}</h2>
-                <p className="mt-2 text-sm text-muted-foreground">{item.body}</p>
+          <div className="grid items-center gap-12 lg:grid-cols-2">
+            <IntegrationCard />
+            <div className="space-y-6">
+              <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+                Capabilities
+              </p>
+              <h2 className="font-serif text-3xl font-medium tracking-tight sm:text-4xl">
+                Everything connected to one decision engine
+              </h2>
+              <p className="max-w-xl text-sm leading-relaxed text-muted-foreground">
+                Live markets, four specialised agents, and an LLM review all feed into a single
+                pipeline. Each part updates the others, and the whole system only acts when the
+                pieces agree and the risk limits hold.
+              </p>
+              <div className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
+                <div>
+                  <h3 className="text-base font-medium">Four agents, one decision</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    The Technical Analyst, News Monitor, Risk Manager and Decision Maker all vote;
+                    the Risk Manager can veto.
+                  </p>
+                </div>
+                <div>
+                  <h3 className="text-base font-medium">Live market data</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Prices stream over a live connection, with candles, the calendar and headlines
+                    included.
+                  </p>
+                </div>
+                <div>
+                  <h3 className="text-base font-medium">Risk comes first</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Position size, stop loss, drawdown limits and VaR are checked before any trade.
+                  </p>
+                </div>
+                <div>
+                  <h3 className="text-base font-medium">Reasoned by an LLM</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Every signal gets a readable narrative that explains why the agents voted the
+                    way they did.
+                  </p>
+                </div>
               </div>
-            ))}
+            </div>
           </div>
         </div>
       </section>
