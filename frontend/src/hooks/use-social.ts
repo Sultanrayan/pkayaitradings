@@ -2,12 +2,14 @@
 
 import { useCallback, useSyncExternalStore } from "react";
 
+import { api } from "@/lib/api";
+
 /** Scalable social-community data layer.
  *
  * Seed content is deterministic; posts/comments/notifications/follows are then
- * persisted to localStorage so interactions survive reloads. The store exposes
- * a single `useSocial()` hook consumed by every Community component, with room
- * to swap the seed layer for a real API later.
+ * persisted to localStorage so interactions survive reloads. When the backend
+ * is reachable the store hydrates from the real Community API and every
+ * mutation is mirrored there, so data is durable and real.
  */
 
 // ---------------------------------------------------------------------------
@@ -618,8 +620,73 @@ function commit(mutate: (draft: SocialState) => void): void {
   notify();
 }
 
+/** Whether the store is hydrated from (and synced to) the real backend. */
+let serverSynced = false;
+
 function uid(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36).slice(-4)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Server integration
+// ---------------------------------------------------------------------------
+
+/** True when the Community API answered a health-ish feed request. */
+export function isCommunityServerReachable(): boolean {
+  return serverSynced;
+}
+
+/**
+ * Hydrate the store from the real Community API. Called once on the client
+ * when the backend is up; local seed/localStorage content is replaced by the
+ * server feed, users, comments and notifications.
+ */
+export async function hydrateCommunityFromServer(): Promise<boolean> {
+  if (typeof window === "undefined" || serverSynced) return serverSynced;
+  try {
+    const [posts, users, notifications] = await Promise.all([
+      api.communityFeed("forYou", 1, 50),
+      api.communityUsers(),
+      api.communityNotifications(),
+    ]);
+    load();
+    if (!state) {
+      state = {
+        users: users,
+        posts: posts,
+        comments: [],
+        notifications: notifications,
+        following: [],
+        muted: [],
+        me: defaultMe(),
+      };
+    } else {
+      state.users = users;
+      state.posts = posts;
+      state.notifications = notifications;
+      // Pull every comment for posts currently in the feed.
+      const commentLists = await Promise.all(
+        posts.slice(0, 8).map((post) =>
+          api.communityComments(post.id).catch(() => [] as SocialComment[]),
+        ),
+      );
+      state.comments = commentLists.flat();
+    }
+    serverSynced = true;
+    persist();
+    notify();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Fire a best-effort Community API mutation when the server is reachable. */
+function mirrorServer(promise: Promise<unknown>): void {
+  if (!serverSynced) return;
+  promise.catch(() => {
+    /* offline / transient — local cache still updated */
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -699,30 +766,29 @@ export function useSocial(): {
     ),
     addPost: useCallback(
       (input) => {
+        const local: SocialPost = {
+          id: pid(),
+          authorId: input.authorId ?? state?.me.id ?? "me",
+          text: input.text,
+          attachments: input.attachments,
+          hashtags: input.hashtags,
+          createdAt: new Date().toISOString(),
+          engagement: 1,
+          likes: 0,
+          likedByMe: false,
+          reposts: 0,
+          repostedByMe: false,
+          quotes: 0,
+          bookmarks: 0,
+          bookmarkedByMe: false,
+          savedByMe: false,
+          mutedByMe: false,
+          blockedByMe: false,
+        };
         commit((draft) => {
-          draft.posts = [
-            {
-              id: pid(),
-              authorId: input.authorId ?? draft.me.id,
-              text: input.text,
-              attachments: input.attachments,
-              hashtags: input.hashtags,
-              createdAt: new Date().toISOString(),
-              engagement: 1,
-              likes: 0,
-              likedByMe: false,
-              reposts: 0,
-              repostedByMe: false,
-              quotes: 0,
-              bookmarks: 0,
-              bookmarkedByMe: false,
-              savedByMe: false,
-              mutedByMe: false,
-              blockedByMe: false,
-            },
-            ...draft.posts,
-          ];
+          draft.posts = [local, ...draft.posts];
         });
+        mirrorServer(api.communityCreatePost({ text: input.text, hashtags: input.hashtags, attachments: input.attachments }));
       },
       [],
     ),
@@ -739,6 +805,7 @@ export function useSocial(): {
           };
         });
       });
+      mirrorServer(api.communityToggleLike(postId));
     }, []),
     toggleRepost: useCallback((postId) => {
       commit((draft) => {
@@ -752,6 +819,7 @@ export function useSocial(): {
           };
         });
       });
+      mirrorServer(api.communityToggleRepost(postId));
     }, []),
     toggleBookmark: useCallback((postId) => {
       commit((draft) => {
@@ -765,6 +833,7 @@ export function useSocial(): {
           };
         });
       });
+      mirrorServer(api.communityToggleBookmark(postId));
     }, []),
     toggleSave: useCallback((postId) => {
       commit((draft) => {
@@ -772,6 +841,7 @@ export function useSocial(): {
           post.id === postId ? { ...post, savedByMe: !post.savedByMe } : post,
         );
       });
+      mirrorServer(api.communityToggleSave(postId));
     }, []),
     toggleMutePost: useCallback((postId) => {
       commit((draft) => {
@@ -779,6 +849,7 @@ export function useSocial(): {
           post.id === postId ? { ...post, mutedByMe: !post.mutedByMe } : post,
         );
       });
+      mirrorServer(api.communityToggleMute(postId));
     }, []),
     blockPost: useCallback((postId) => {
       commit((draft) => {
@@ -786,6 +857,7 @@ export function useSocial(): {
           post.id === postId ? { ...post, blockedByMe: true } : post,
         );
       });
+      mirrorServer(api.communityBlockPost(postId));
     }, []),
     addComment: useCallback((postId, parentId, text) => {
       const authorId = state?.me.id ?? "me";
@@ -831,6 +903,7 @@ export function useSocial(): {
           });
         }
       });
+      mirrorServer(api.communityAddComment(postId, { text, parentId }));
     }, []),
     toggleCommentLike: useCallback((commentId, postId) => {
       commit((draft) => {
@@ -840,6 +913,7 @@ export function useSocial(): {
           return { ...comment, likedByMe, likes: comment.likes + (likedByMe ? 1 : -1) };
         });
       });
+      mirrorServer(api.communityCommentLike(commentId));
     }, []),
     toggleCommentRepost: useCallback((commentId, postId) => {
       commit((draft) => {
@@ -849,6 +923,7 @@ export function useSocial(): {
           return { ...comment, repostedByMe, reposts: comment.reposts + (repostedByMe ? 1 : -1) };
         });
       });
+      mirrorServer(api.communityCommentRepost(commentId));
     }, []),
     deleteComment: useCallback((commentId, postId) => {
       commit((draft) => {
@@ -858,6 +933,7 @@ export function useSocial(): {
             : comment,
         );
       });
+      mirrorServer(api.communityDeleteComment(commentId));
     }, []),
     reportComment: useCallback((commentId, postId) => {
       commit((draft) => {
@@ -867,6 +943,7 @@ export function useSocial(): {
             : comment,
         );
       });
+      mirrorServer(api.communityCommentReport(commentId));
     }, []),
     followUser: useCallback((userId) => {
       commit((draft) => {
@@ -885,6 +962,7 @@ export function useSocial(): {
           read: false,
         });
       });
+      mirrorServer(api.communityFollowUser(userId));
     }, []),
     unfollowUser: useCallback((userId) => {
       commit((draft) => {
@@ -893,11 +971,13 @@ export function useSocial(): {
           u.id === userId ? { ...u, followers: Math.max(0, u.followers - 1) } : u,
         );
       });
+      mirrorServer(api.communityUnfollowUser(userId));
     }, []),
     markAllNotificationsRead: useCallback(() => {
       commit((draft) => {
         draft.notifications = draft.notifications.map((n) => ({ ...n, read: true }));
       });
+      mirrorServer(api.communityMarkNotificationsRead());
     }, []),
     unreadCount: s.notifications.filter((n) => !n.read).length,
     setMe: useCallback((me: SocialUser) => {

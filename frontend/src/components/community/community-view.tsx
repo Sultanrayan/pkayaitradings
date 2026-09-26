@@ -23,7 +23,7 @@ import {
 import { UserProfileDialog } from "@/components/community/user-profile";
 import { setCommunityBotContext } from "@/lib/community-bot-context";
 import { useMarketContext } from "@/components/symbol-provider";
-import { useSocial, feedForTab, SUGGESTED_TRADERS, TRENDING_MARKETS, TRENDING_TOPICS } from "@/hooks/use-social";
+import { useSocial, feedForTab, hydrateCommunityFromServer, SUGGESTED_TRADERS, TRENDING_MARKETS, TRENDING_TOPICS } from "@/hooks/use-social";
 import type { FeedTab } from "@/hooks/use-social";
 
 const PAGE_SIZE = 6;
@@ -54,6 +54,11 @@ export function CommunityView() {
     }
     return social.me;
   }, [authUser, social.me]);
+
+  // Hydrate from the real backend once, keeping the local seed as fallback.
+  useEffect(() => {
+    void hydrateCommunityFromServer();
+  }, []);
 
   // Simulated load: skeleton first, then feed (and simulate an error condition
   // once so the error state can be verified without breaking the page).

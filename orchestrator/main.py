@@ -53,6 +53,7 @@ from orchestrator.billing import (
     BillingPayment,
     BillingStore,
 )
+from orchestrator.community import router as community_router
 from orchestrator.dev_api import router as dev_api_router
 from orchestrator.oauth import build_authorization_url, exchange_code_for_identity
 from orchestrator.pipeline import AnalysisPipeline, CycleResult, run_analysis_cycle
@@ -339,6 +340,7 @@ app.add_middleware(
 )
 
 app.include_router(dev_api_router)
+app.include_router(community_router)
 if _app_settings.raggrap_enabled:
     app.include_router(raggrap_router)
 

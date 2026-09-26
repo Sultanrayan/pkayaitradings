@@ -182,6 +182,130 @@ export const api = {
 
   marketSummary: () => request<MarketSummary>("/api/v1/market/summary"),
 
+  // --- Community (social feed) ---
+  communityFeed: (tab = "forYou", page = 1, pageSize = 6) =>
+    request<import("@/hooks/use-social").SocialPost[]>(
+      `/api/v1/community/feed?tab=${tab}&page=${page}&page_size=${pageSize}`,
+    ),
+
+  communityUsers: () =>
+    request<import("@/hooks/use-social").SocialUser[]>("/api/v1/community/users"),
+
+  communityPost: (postId: string) =>
+    request<import("@/hooks/use-social").SocialPost>(`/api/v1/community/posts/${postId}`),
+
+  communityCreatePost: (body: {
+    text: string;
+    hashtags: string[];
+    attachments: import("@/hooks/use-social").PostAttachment[];
+  }) =>
+    request<import("@/hooks/use-social").SocialPost>("/api/v1/community/posts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  communityToggleLike: (postId: string) =>
+    request<import("@/hooks/use-social").SocialPost>(`/api/v1/community/posts/${postId}/like`, {
+      method: "POST",
+    }),
+
+  communityToggleRepost: (postId: string) =>
+    request<import("@/hooks/use-social").SocialPost>(`/api/v1/community/posts/${postId}/repost`, {
+      method: "POST",
+    }),
+
+  communityToggleBookmark: (postId: string) =>
+    request<import("@/hooks/use-social").SocialPost>(`/api/v1/community/posts/${postId}/bookmark`, {
+      method: "POST",
+    }),
+
+  communityToggleSave: (postId: string) =>
+    request<import("@/hooks/use-social").SocialPost>(`/api/v1/community/posts/${postId}/save`, {
+      method: "POST",
+    }),
+
+  communityToggleMute: (postId: string) =>
+    request<import("@/hooks/use-social").SocialPost>(`/api/v1/community/posts/${postId}/mute`, {
+      method: "POST",
+    }),
+
+  communityBlockPost: (postId: string) =>
+    request<import("@/hooks/use-social").SocialPost>(`/api/v1/community/posts/${postId}/block`, {
+      method: "POST",
+    }),
+
+  communityComments: (postId: string) =>
+    request<import("@/hooks/use-social").SocialComment[]>(
+      `/api/v1/community/posts/${postId}/comments`,
+    ),
+
+  communityAddComment: (
+    postId: string,
+    body: { text: string; parentId?: string | null },
+  ) =>
+    request<import("@/hooks/use-social").SocialComment>(
+      `/api/v1/community/posts/${postId}/comments`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+
+  communityCommentLike: (commentId: string) =>
+    request<import("@/hooks/use-social").SocialComment>(
+      `/api/v1/community/comments/${commentId}/like`,
+      { method: "POST" },
+    ),
+
+  communityCommentRepost: (commentId: string) =>
+    request<import("@/hooks/use-social").SocialComment>(
+      `/api/v1/community/comments/${commentId}/repost`,
+      { method: "POST" },
+    ),
+
+  communityDeleteComment: (commentId: string) =>
+    request<null>(`/api/v1/community/comments/${commentId}`, { method: "DELETE" }),
+
+  communityCommentReport: (commentId: string) =>
+    request<import("@/hooks/use-social").SocialComment>(
+      `/api/v1/community/comments/${commentId}/report`,
+      { method: "POST" },
+    ),
+
+  communityFollowUser: (userId: string) =>
+    request<{ following: boolean }>(`/api/v1/community/users/${userId}/follow`, {
+      method: "POST",
+    }),
+
+  communityUnfollowUser: (userId: string) =>
+    request<{ following: boolean }>(`/api/v1/community/users/${userId}/follow`, {
+      method: "DELETE",
+    }),
+
+  communityNotifications: () =>
+    request<import("@/hooks/use-social").SocialNotification[]>("/api/v1/community/notifications"),
+
+  communityMarkNotificationsRead: () =>
+    request<{ mark: number }>("/api/v1/community/notifications/read", { method: "POST" }),
+
+  communitySearch: (q: string) =>
+    request<{
+      users: import("@/hooks/use-social").SocialUser[];
+      posts: import("@/hooks/use-social").SocialPost[];
+      markets: string[];
+      hashtags: string[];
+      topics: string[];
+    }>(`/api/v1/community/search?q=${encodeURIComponent(q)}`),
+
+  communityTrending: () =>
+    request<{
+      markets: import("@/hooks/use-social").TrendingMarket[];
+      topics: import("@/hooks/use-social").TrendingTopic[];
+      suggested: import("@/hooks/use-social").SuggestedTrader[];
+    }>("/api/v1/community/trending"),
+
   register: (body: {
     name: string;
     email: string;

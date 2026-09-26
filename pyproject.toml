@@ -135,6 +135,8 @@ ignore = [
 # The Raggrap engine lives in its own documented project folder ("Raggrap/").
 "Raggrap/**" = ["N999"]
 "tests/**" = ["S101"]
+# Community API response models intentionally mirror the camelCase frontend types.
+"orchestrator/community.py" = ["N815"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["agents", "shared", "data_pipeline", "execution", "orchestrator"]

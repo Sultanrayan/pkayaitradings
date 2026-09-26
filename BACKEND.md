@@ -188,11 +188,34 @@ the main LLM settings so corrections guardrail the same model the agents use.
 |---|---|---|
 | POST | `/api/v1/access/apply` | `{name, email, use_case, website, turnstile_token?}` → `202` review message |
 
-### WebSocket
-| Path | Params | Notes |
-|---|---|---|
-| `/ws/ticks` | `?symbols=XAUUSD,BTCUSD&token=` | Live tick stream; `token` required when `AUTH_REQUIRED=true` |
+## Community API (new)
 
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/v1/community/feed` | ✓ | Feed posts for tab (`forYou`/`following`/`trending`) |
+| POST | `/api/v1/community/posts` | ✓ | Create post |
+| POST | `/api/v1/community/posts/{id}/like` | ✓ | Toggle like |
+| POST | `/api/v1/community/posts/{id}/repost` | ✓ | Toggle repost |
+| POST | `/api/v1/community/posts/{id}/bookmark` | ✓ | Toggle bookmark |
+| POST | `/api/v1/community/posts/{id}/save` | ✓ | Toggle save |
+| POST | `/api/v1/community/posts/{id}/mute` | ✓ | Toggle mute |
+| POST | `/api/v1/community/posts/{id}/block` | ✓ | Block post |
+| GET | `/api/v1/community/posts/{id}/comments` | ✓ | Get comments |
+| POST | `/api/v1/community/posts/{id}/comments` | ✓ | Add comment |
+| POST | `/api/v1/community/comments/{id}/like` | ✓ | Toggle comment like |
+| POST | `/api/v1/community/comments/{id}/repost` | ✓ | Toggle comment repost |
+| DELETE | `/api/v1/community/comments/{id}` | ✓ | Delete own comment |
+| POST | `/api/v1/community/comments/{id}/report` | ✓ | Report comment |
+| GET | `/api/v1/community/users` | ✓ | List users |
+| GET | `/api/v1/community/users/{id}` | ✓ | Get user |
+| POST | `/api/v1/community/users/{id}/follow` | ✓ | Follow user |
+| DELETE | `/api/v1/community/users/{id}/follow` | ✓ | Unfollow user |
+| GET | `/api/v1/community/notifications` | ✓ | Notifications |
+| POST | `/api/v1/community/notifications/read` | ✓ | Mark all read |
+| GET | `/api/v1/community/search` | ✓ | Search |
+| GET | `/api/v1/community/trending` | ✓ | Trending data |
+
+All endpoints use the same auth pattern as the rest of the API and return real data from the community store (no dummy data).
 ---
 
 ## 5. The four agents
