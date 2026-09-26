@@ -23,7 +23,7 @@ export function pairLabel(symbol: string): string {
  * TradingView-style pair selector: a single trigger that reveals the asset
  * search/list/favourites menu only when clicked, closing after a pick.
  */
-export function PairSelector() {
+export function PairSelector({ assets }: { assets?: string[] }) {
   const { symbol } = useMarketContext();
   const [open, setOpen] = useState(false);
 
@@ -43,7 +43,7 @@ export function PairSelector() {
         <DropdownMenuLabel>Markets</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <div className="p-1">
-          <AssetPicker onSelect={() => setOpen(false)} />
+          <AssetPicker assets={assets} onSelect={() => setOpen(false)} />
         </div>
       </DropdownMenuContent>
     </DropdownMenu>

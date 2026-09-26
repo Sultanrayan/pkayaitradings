@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { ErrorNote, EmptyState, LoadingRows } from "@/components/shared/primitives";
 import { useOhlc } from "@/hooks/use-ohlc";
 import { useSignals } from "@/hooks/use-api";
+import { useDemoMarket, useDemoMode } from "@/hooks/use-demo-market";
 import { useWatchlist } from "@/hooks/use-watchlist";
 import { atr, bollinger, ema, macd, rsi, stochastic } from "@/lib/indicators";
 import { cn } from "cn";
@@ -87,6 +88,8 @@ function signalsToMarkers(bars: OhlcBar[], signals: SignalRecord[]): ChartMarker
  */
 export function DashboardView() {
   const { symbol, timeframe, activeTick } = useMarketContext();
+  const demo = useDemoMode();
+  const demoMarket = useDemoMarket(demo, timeframe);
   const { series, loading, error } = useOhlc(symbol, timeframe, 400);
   const signals = useSignals({ symbol, agent: "technical_analyst", limit: 60 });
   const { contains, toggle } = useWatchlist();
@@ -110,8 +113,13 @@ export function DashboardView() {
     stochastic: false,
   });
 
-  const bars = useMemo(() => series?.bars ?? [], [series]);
+  const bars = useMemo(() => (demo ? demoMarket?.series.bars ?? [] : series?.bars ?? []), [demo, demoMarket, series]);
   const closes = useMemo(() => bars.map((bar) => bar.close), [bars]);
+  const effectiveSignals = useMemo(
+    () => (demo ? demoMarket?.signals ?? [] : signals.data),
+    [demo, demoMarket, signals.data],
+  );
+  const effectiveTick = useMemo(() => (demo ? demoMarket?.tick : activeTick), [demo, demoMarket, activeTick]);
 
   const computed = useMemo(() => {
     if (!bars.length) return null;
@@ -128,9 +136,9 @@ export function DashboardView() {
     };
   }, [bars, closes]);
 
-  const markers = useMemo(() => signalsToMarkers(bars, signals.data), [bars, signals.data]);
+  const markers = useMemo(() => signalsToMarkers(bars, effectiveSignals), [bars, effectiveSignals]);
 
-  const latestTechnical = signals.data.find((record) => record.kind === "technical_signal");
+  const latestTechnical = effectiveSignals.find((record) => record.kind === "technical_signal");
   const levels = useMemo(() => {
     const payload = latestTechnical?.payload as
       | { key_levels?: { support?: number | null; resistance?: number | null } }
@@ -156,7 +164,7 @@ export function DashboardView() {
     setIndicators((previous) => ({ ...previous, [key]: !previous[key] }));
 
   const watched = contains(symbol);
-  const change = activeTick?.dayDiffPercent ?? null;
+  const change = effectiveTick?.dayDiffPercent ?? null;
   const changeTone = change === null ? "text-muted-foreground" : change >= 0 ? "text-bull" : "text-bear";
 
   const panesOn = INDICATOR_LABELS.some((indicator) => indicators[indicator.key]);
@@ -165,12 +173,17 @@ export function DashboardView() {
     <div className="flex h-full flex-col">
       {/* Top bar: pair + timeframe (dropdown-only), price, chart controls */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border bg-card px-3 py-2">
-        <PairSelector />
+        <PairSelector assets={demo ? demoMarket?.symbols : undefined} />
         <span className="mx-1 h-4 w-px bg-border" />
         <TimeframeSelector />
 
         <div className="ml-2 flex min-w-0 items-center gap-2">
-          <span className="tabular text-sm font-semibold">{formatPrice(activeTick?.mid)}</span>
+          {demo ? (
+            <span className="rounded-full border border-gold/40 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-gold">
+              Demo
+            </span>
+          ) : null}
+          <span className="tabular text-sm font-semibold">{formatPrice(effectiveTick?.mid)}</span>
           <span className={cn("tabular text-xs font-medium", changeTone)}>{formatSignedPercent(change)}</span>
           <button
             type="button"
@@ -255,7 +268,7 @@ export function DashboardView() {
         </div>
       ) : null}
 
-      {error ? (
+      {!demo && error ? (
         <div className="px-3 py-2">
           <ErrorNote>{error}</ErrorNote>
         </div>
@@ -263,7 +276,7 @@ export function DashboardView() {
 
       {/* Chart fills the remaining screen height; panes shrink it when enabled */}
       <div ref={containerRef} className="relative flex min-h-0 flex-1 flex-col bg-card">
-        {loading && bars.length === 0 ? (
+        {!demo && loading && bars.length === 0 ? (
           <LoadingRows rows={6} className="h-full" />
         ) : bars.length === 0 ? (
           <div className="flex h-full items-center justify-center p-4">

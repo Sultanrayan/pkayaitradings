@@ -15,10 +15,17 @@ import type { Tick } from "@/lib/types";
  * chart while preserving the selected timeframe. `onSelect` is called after
  * an asset is chosen (used by dropdown wrappers to close the menu).
  */
-export function AssetPicker({ onSelect }: { onSelect?: () => void }) {
-  const { symbols, symbol, setSymbol, ticks } = useMarketContext();
+export function AssetPicker({
+  onSelect,
+  assets,
+}: {
+  onSelect?: () => void;
+  assets?: string[];
+}) {
+  const { symbols: contextSymbols, symbol, setSymbol, ticks } = useMarketContext();
   const { symbols: watched, toggle, contains } = useWatchlist();
   const [query, setQuery] = useState("");
+  const symbols = assets ?? contextSymbols;
 
   const normalized = query.trim().toUpperCase();
 
