@@ -12,6 +12,7 @@ import { ProfileMenu } from "@/components/navbar/profile-menu";
 import { Button } from "@/components/ui/button";
 
 const NAV_LINKS = [
+  { href: "/community", label: "Community" },
   { href: "/signals", label: "Signal" },
   { href: "/news", label: "News" },
   { href: "/market", label: "Market" },

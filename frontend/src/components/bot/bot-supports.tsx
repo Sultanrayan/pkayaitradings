@@ -5,6 +5,7 @@ import { Bot, X } from "lucide-react";
 import { motion } from "framer-motion";
 
 import { BotPanel } from "@/components/bot/bot-panel";
+import { useCommunityBotContext } from "@/lib/community-bot-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
@@ -13,6 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
  */
 export function BotSupports() {
   const [open, setOpen] = useState(false);
+  const communityContext = useCommunityBotContext();
   const panelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -54,7 +56,7 @@ export function BotSupports() {
 
       {open ? (
         <div ref={panelRef} className="fixed bottom-20 right-4 z-50 w-[calc(100vw-2rem)] max-w-sm sm:right-6">
-          <BotPanel onClose={() => setOpen(false)} />
+          <BotPanel onClose={() => setOpen(false)} communityContext={communityContext} />
         </div>
       ) : null}
     </>

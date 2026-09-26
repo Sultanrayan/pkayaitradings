@@ -1,16 +1,17 @@
 "use client";
 
-import { useState } from "react";
-import {
-  HeartIcon,
-  ImageIcon,
-  MessageCircleIcon,
-  MoreHorizontalIcon,
-  SendIcon,
-} from "lucide-react";
+import { useMemo, useState } from "react";
+import { MessageCircleIcon, UserPlusIcon, UserCheckIcon } from "lucide-react";
 import { cn } from "cn";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  ChartAttachment,
+  MarketAttachment,
+  SignalAttachment,
+} from "@/components/community/attachments";
+import { CommentThread } from "@/components/community/comment-thread";
+import { MoreMenu, PostActions } from "@/components/community/post-actions";
+import { UserAvatar, VerifiedBadge, relativeTime } from "@/components/community/shared";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -18,209 +19,303 @@ import {
   CardFooter,
   CardHeader,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { formatDateTime } from "@/lib/format";
 import type {
-  CommunityAuthor,
-  CommunityPost,
-} from "@/hooks/use-community";
+  PostAttachment,
+  SocialComment,
+  SocialPost,
+  SocialUser,
+} from "@/hooks/use-social";
 
-function AuthorAvatar({ author, className }: { author: CommunityAuthor; className?: string }) {
-  const initials = author.name
-    .split(/\s+/)
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+const SHOW_MORE = 220;
+
+function AttachmentList({
+  attachments,
+  onOpenMarket,
+}: {
+  attachments: PostAttachment[];
+  onOpenMarket: (symbol: string) => void;
+}) {
+  const images = attachments.filter((attachment) => attachment.type === "image");
+  const videos = attachments.filter((attachment) => attachment.type === "video");
+  const markets = attachments.filter((attachment) => attachment.type === "market");
+  const charts = attachments.filter((attachment) => attachment.type === "chart");
+  const signals = attachments.filter((attachment) => attachment.type === "signal");
+
   return (
-    <Avatar className={className}>
-      {author.avatar ? <AvatarImage src={author.avatar} alt={author.name} /> : null}
-      <AvatarFallback>{initials || "U"}</AvatarFallback>
-    </Avatar>
+    <div className="space-y-2">
+      {images.length > 0 ? (
+        <div
+          className={cn(
+            "grid gap-1 overflow-hidden rounded-lg border border-border",
+            images.length > 1 && "grid-cols-2",
+          )}
+        >
+          {images.map((attachment) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={attachment.id}
+              src={attachment.url}
+              alt={attachment.alt ?? ""}
+              className={cn(
+                "size-full object-cover",
+                images.length === 1 ? "max-h-72 w-full" : "aspect-square",
+              )}
+            />
+          ))}
+        </div>
+      ) : null}
+      {videos.length > 0 ? (
+        <div className="overflow-hidden rounded-lg border border-border">
+          {videos.map((attachment) => (
+            <video key={attachment.id} src={attachment.url} controls className="max-h-72 w-full bg-black" />
+          ))}
+        </div>
+      ) : null}
+      {markets.map((attachment) => (
+        <MarketAttachment
+          key={attachment.id}
+          symbol={attachment.symbol}
+          onClick={() => onOpenMarket(attachment.symbol)}
+        />
+      ))}
+      {charts.map((attachment) =>
+        attachment.type === "chart" ? (
+          <ChartAttachment
+            key={attachment.id}
+            symbol={attachment.symbol}
+            timeframe={attachment.timeframe}
+            onClick={() => onOpenMarket(attachment.symbol)}
+          />
+        ) : null,
+      )}
+      {signals.map((attachment) =>
+        attachment.type === "signal" ? (
+          <SignalAttachment
+            key={attachment.id}
+            symbol={attachment.symbol}
+            side={attachment.side}
+            timeframe={attachment.timeframe}
+            entry={attachment.entry}
+            target={attachment.target}
+            stop={attachment.stop}
+            createdAt={attachment.createdAt}
+            onClick={() => onOpenMarket(attachment.symbol)}
+          />
+        ) : null,
+      )}
+    </div>
   );
 }
 
-/** Highlight `#tag` tokens in a caption like the reference card does. */
-function CaptionText({ caption, hashtags }: { caption: string; hashtags: string[] }) {
-  const tokens = caption.split(/(\s+)/);
-  const tagSet = new Set(hashtags.map((tag) => `#${tag.toLowerCase()}`));
+function PostText({ text, hashtags }: { text: string; hashtags: string[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = text.length > SHOW_MORE;
+  const shown = long && !expanded ? `${text.slice(0, SHOW_MORE)}…` : text;
+  const tagSet = new Set(hashtags.map((tag) => tag.toLowerCase()));
+
   return (
-    <>
-      {tokens.map((token, index) => {
-        if (token.startsWith("#")) {
-          const isKnown = tagSet.has(token.toLowerCase());
-          return (
-            <span key={index} className={cn("text-blue-500", !isKnown && "opacity-80")}>
+    <div>
+      <p className="whitespace-pre-wrap text-sm leading-relaxed">
+        {shown.split(/(\s+)/).map((token, index) => {
+          const isTag = /^#[\w\d_-]+$/.test(token);
+          return isTag ? (
+            <span key={index} className="text-blue-500">
               {token}
             </span>
+          ) : (
+            <span key={index}>{token}</span>
           );
-        }
-        return <span key={index}>{token}</span>;
-      })}
-    </>
-  );
-}
-
-function CommentRow({ comment }: { comment: CommunityPost["comments"][number] }) {
-  return (
-    <div className="flex gap-2.5">
-      <AuthorAvatar author={comment.author} className="mt-0.5 size-6" />
-      <div className="min-w-0 flex-1 rounded-lg bg-muted/60 px-3 py-2">
-        <div className="flex items-baseline gap-2">
-          <span className="text-xs font-medium">{comment.author.name}</span>
-          <span className="text-[10px] text-muted-foreground">
-            @{comment.author.handle} · {formatDateTime(comment.createdAt)}
-          </span>
+        })}
+      </p>
+      {long ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="mt-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      ) : null}
+      {tagSet.size > 0 && !long ? (
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {Array.from(tagSet).map((tag) => (
+            <span key={tag} className="text-xs text-blue-500">
+              #{tag}
+            </span>
+          ))}
         </div>
-        <p className="mt-0.5 text-sm text-foreground/85">{comment.text}</p>
-      </div>
+      ) : null}
     </div>
   );
 }
 
 /**
- * Community post card styled after 21st.dev card-06 (Post Card): avatar and
- * handle header, 14:9 media, title + caption with hashtags, and action row
- * with Like / Comment / Share. Toggling Comment expands threaded replies.
+ * Reusable community post: header (avatar, name, handle, verified, time,
+ * follow, more menu), text with show-more, optional attachments (images,
+ * video, market, chart, signal), engagement actions and an expandable comment
+ * thread.
  */
-export function CommunityPostCard({
+export function PostCard({
   post,
-  currentUser,
-  onToggleLike,
+  author,
+  me,
+  isFollowing,
+  comments,
+  onToggleFollow,
+  onLike,
+  onRepost,
+  onBookmark,
+  onShare,
+  onQuote,
+  onSave,
+  onCopyLink,
+  onReport,
+  onMute,
+  onBlock,
+  onAnalyze,
+  onOpenMarket,
+  onOpenProfile,
   onAddComment,
+  onReplyToComment,
+  onToggleCommentLike,
+  onToggleCommentRepost,
+  onDeleteComment,
+  onReportComment,
+  usersById,
+  defaultThreadOpen = false,
 }: {
-  post: CommunityPost;
-  currentUser: CommunityAuthor | null;
-  onToggleLike: (postId: string) => void;
-  onAddComment: (postId: string, author: CommunityAuthor, text: string) => void;
+  post: SocialPost;
+  author: SocialUser | undefined;
+  me: SocialUser;
+  isFollowing: boolean;
+  comments: SocialComment[];
+  onToggleFollow: (userId: string) => void;
+  onLike: (postId: string) => void;
+  onRepost: (postId: string) => void;
+  onBookmark: (postId: string) => void;
+  onShare: (postId: string) => void;
+  onQuote: (postId: string) => void;
+  onSave: (postId: string) => void;
+  onCopyLink: (postId: string) => void;
+  onReport: (postId: string) => void;
+  onMute: (postId: string) => void;
+  onBlock: (postId: string) => void;
+  onAnalyze: (postId: string) => void;
+  onOpenMarket: (symbol: string) => void;
+  onOpenProfile: (userId: string) => void;
+  onAddComment: (postId: string, text: string) => void;
+  onReplyToComment: (postId: string, commentId: string, text: string) => void;
+  onToggleCommentLike: (commentId: string, postId: string) => void;
+  onToggleCommentRepost: (commentId: string, postId: string) => void;
+  onDeleteComment: (commentId: string, postId: string) => void;
+  onReportComment: (commentId: string, postId: string) => void;
+  usersById: (id: string) => SocialUser | undefined;
+  defaultThreadOpen?: boolean;
 }) {
-  const [commentsOpen, setCommentsOpen] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [threadOpen, setThreadOpen] = useState(defaultThreadOpen);
+  const mine = post.authorId === me.id;
 
-  const handleSubmit = () => {
-    if (!draft.trim()) return;
-    const author: CommunityAuthor = currentUser ?? {
-      name: "Guest Trader",
-      handle: "guest",
-      avatar: null,
-    };
-    onAddComment(post.id, author, draft);
-    setDraft("");
-  };
+  const commentCount = useMemo(() => comments.length, [comments]);
 
   return (
     <Card className="w-full gap-0 py-0 ring-border">
-      {/* Header: avatar + name + handle + menu */}
-      <CardHeader className="-mb-1 flex flex-row items-center justify-between gap-2 px-4 pt-3">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <AuthorAvatar author={post.author} />
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium leading-tight">{post.author.name}</div>
-            <div className="text-xs text-muted-foreground">
-              @{post.author.handle} · {formatDateTime(post.createdAt)}
-            </div>
+      <CardHeader className="-mb-1 flex-row items-center gap-2.5 px-4 pt-3">
+        <button type="button" onClick={() => onOpenProfile(post.authorId)}>
+          <UserAvatar user={author ?? { name: "Unknown", avatar: null }} />
+        </button>
+        <div className="min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={() => onOpenProfile(post.authorId)}
+            className="flex min-w-0 items-center gap-1 text-left"
+          >
+            <span className="truncate text-sm font-medium">{author?.name ?? "Unknown"}</span>
+            {author?.verified ? <VerifiedBadge /> : null}
+          </button>
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <span className="truncate">@{author?.handle ?? "unknown"}</span>
+            <span>·</span>
+            <span>{relativeTime(post.createdAt)}</span>
           </div>
         </div>
-        <Button size="icon" variant="ghost" className="shrink-0 text-muted-foreground">
-          <MoreHorizontalIcon />
-        </Button>
+        {!mine ? (
+          <Button
+            size="sm"
+            variant={isFollowing ? "outline" : "default"}
+            className="gap-1"
+            onClick={() => onToggleFollow(post.authorId)}
+          >
+            {isFollowing ? (
+              <>
+                <UserCheckIcon className="size-3.5" /> Following
+              </>
+            ) : (
+              <>
+                <UserPlusIcon className="size-3.5" /> Follow
+              </>
+            )}
+          </Button>
+        ) : null}
+        <MoreMenu
+          saved={post.savedByMe}
+          muted={post.mutedByMe}
+          blocked={post.blockedByMe}
+          onSave={() => onSave(post.id)}
+          onCopyLink={() => onCopyLink(post.id)}
+          onReport={() => onReport(post.id)}
+          onMute={() => onMute(post.id)}
+          onBlock={() => onBlock(post.id)}
+          onAnalyze={() => onAnalyze(post.id)}
+        />
       </CardHeader>
 
-      {/* Media */}
-      <div className="relative aspect-[14/9] w-full border-y border-border bg-muted/40">
-        {post.image ? (
-          // user-supplied images may be data-URLs or remote, so a plain img is used
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            alt={post.title || post.caption}
-            className="size-full object-cover"
-            src={post.image}
-          />
-        ) : (
-          <div className="flex size-full flex-col items-center justify-center gap-1 text-muted-foreground">
-            <ImageIcon className="size-8" />
-            <span className="text-xs">No image</span>
-          </div>
-        )}
-      </div>
-
-      {/* Text */}
-      <CardContent className="gap-0 px-4 py-3">
-        {post.title ? <h2 className="font-semibold leading-snug">{post.title}</h2> : null}
-        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-          <CaptionText caption={post.caption} hashtags={post.hashtags} />
-        </p>
+      <CardContent className="space-y-3 px-4 py-3">
+        <PostText text={post.text} hashtags={post.hashtags} />
+        <AttachmentList attachments={post.attachments} onOpenMarket={onOpenMarket} />
       </CardContent>
 
-      {/* Actions */}
-      <CardFooter className="items-center justify-between border-t px-1 py-0">
-        <div className="flex w-full items-center justify-around py-1">
-          <Button
-            variant="ghost"
-            className={cn(
-              "shrink-0 text-muted-foreground",
-              post.likedByMe && "text-bull",
-            )}
-            onClick={() => onToggleLike(post.id)}
-            aria-pressed={post.likedByMe}
+      <CardFooter className="flex-col items-stretch gap-1 border-t px-2 py-0">
+        <PostActions
+          liked={post.likedByMe}
+          reposted={post.repostedByMe}
+          bookmarked={post.bookmarkedByMe}
+          counts={{
+            likes: post.likes,
+            comments: commentCount,
+            reposts: post.reposts,
+          }}
+          onLike={() => onLike(post.id)}
+          onComment={() => setThreadOpen((value) => !value)}
+          onRepost={() => onRepost(post.id)}
+          onQuote={() => onQuote(post.id)}
+          onShare={() => onShare(post.id)}
+          onBookmark={() => onBookmark(post.id)}
+        />
+        {commentCount > 0 && !threadOpen ? (
+          <button
+            type="button"
+            onClick={() => setThreadOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
           >
-            <HeartIcon className={cn(post.likedByMe && "fill-bull")} />
-            <span className="hidden sm:inline">{post.likedByMe ? "Liked" : "Like"}</span>
-            {post.likes > 0 ? <span className="tabular">{post.likes}</span> : null}
-          </Button>
-          <Button
-            variant="ghost"
-            className="shrink-0 text-muted-foreground"
-            onClick={() => {
-              setCommentsOpen((open) => !open);
-              if (!commentsOpen) setDraft("");
-            }}
-            aria-expanded={commentsOpen}
-          >
-            <MessageCircleIcon />
-            <span className="hidden sm:inline">Comment</span>
-            {post.comments.length > 0 ? (
-              <span className="tabular">{post.comments.length}</span>
-            ) : null}
-          </Button>
-          <Button variant="ghost" className="shrink-0 text-muted-foreground">
-            <span className="text-base leading-none">↗</span>
-            <span className="hidden sm:inline">Share</span>
-          </Button>
-        </div>
+            <MessageCircleIcon className="size-3.5" />
+            {commentCount} {commentCount === 1 ? "comment" : "comments"}
+          </button>
+        ) : null}
       </CardFooter>
 
-      {/* Comments */}
-      {commentsOpen ? (
-        <div className="space-y-3 border-t border-border bg-muted/20 px-4 py-3">
-          {post.comments.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No comments yet — start the thread.</p>
-          ) : (
-            post.comments.map((comment) => <CommentRow key={comment.id} comment={comment} />)
-          )}
-          <div className="flex items-center gap-2">
-            <AuthorAvatar
-              author={currentUser ?? { name: "Guest", handle: "guest", avatar: null }}
-              className="size-6"
-            />
-            <Input
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  handleSubmit();
-                }
-              }}
-              placeholder="Write a comment…"
-              className="h-8 text-sm"
-            />
-            <Button size="icon-sm" variant="secondary" onClick={handleSubmit} disabled={!draft.trim()}>
-              <SendIcon />
-              <span className="sr-only">Post comment</span>
-            </Button>
-          </div>
-        </div>
+      {threadOpen ? (
+        <CommentThread
+          comments={comments}
+          me={me}
+          usersById={usersById}
+          topPlaceholder="Add a comment…"
+          onTopReply={(text) => onAddComment(post.id, text)}
+          onReplyToComment={(commentId, text) => onReplyToComment(post.id, commentId, text)}
+          onLike={(commentId) => onToggleCommentLike(commentId, post.id)}
+          onRepost={(commentId) => onToggleCommentRepost(commentId, post.id)}
+          onDelete={(commentId) => onDeleteComment(commentId, post.id)}
+          onReport={(commentId) => onReportComment(commentId, post.id)}
+        />
       ) : null}
     </Card>
   );

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, Loader2, Send, X } from "lucide-react";
 
+import { useCommunityBotContext } from "@/lib/community-bot-context";
 import { useMarketContext } from "@/components/symbol-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +17,7 @@ interface Message {
   text: string;
 }
 
-const QUICK_ACTIONS = [
+const MARKET_QUICK_ACTIONS = [
   "Analyze this chart",
   "Explain this market",
   "Explain this signal",
@@ -24,16 +25,36 @@ const QUICK_ACTIONS = [
   "Help me understand the chart",
 ];
 
-function contextPrompt(symbol: string, timeframe: ChartTimeframe, text: string): string {
+const COMMUNITY_QUICK_ACTIONS = [
+  "Analyze this post",
+  "Analyze this chart",
+  "Explain this market",
+  "Summarize this discussion",
+  "Explain this signal",
+];
+
+function contextPrompt(
+  symbol: string,
+  timeframe: ChartTimeframe,
+  text: string,
+  community?: { label: string; detail: string; symbol?: string } | null,
+): string {
+  const communityContext = community
+    ? ` [Community context] The user is looking at "${community.label}" in the trading community. ` +
+      `Relevant content: "${community.detail.slice(0, 600)}".${community.symbol ? ` Asset: ${community.symbol}.` : ""}`
+    : "";
   return (
-    `[Context] The user is viewing ${symbol} on the ${timeframe} timeframe in the Pkay trading app. ` +
-    `Answer as a helpful market-analysis assistant. The user says: "${text}"`
+    `[Context] The user is viewing ${symbol} on the ${timeframe} timeframe in the Pkay trading app.` +
+    `${communityContext} Answer as a helpful market-analysis assistant. The user says: "${text}"`
   );
 }
 
 /** Chat body shared by the floating Bot Supports panel and the dedicated AI page. */
-export function BotPanel({ onClose }: { onClose?: () => void }) {
+export function BotPanel({ onClose, communityContext }: { onClose?: () => void; communityContext?: ReturnType<typeof useCommunityBotContext> }) {
   const { symbol, timeframe } = useMarketContext();
+  const liveCommunity = useCommunityBotContext();
+  const effectiveCommunity = communityContext ?? liveCommunity;
+  const quickActions = effectiveCommunity ? COMMUNITY_QUICK_ACTIONS : MARKET_QUICK_ACTIONS;
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -56,7 +77,9 @@ export function BotPanel({ onClose }: { onClose?: () => void }) {
       setInput("");
       setBusy(true);
       try {
-        const response = await api.raggrapQuery(contextPrompt(symbol, timeframe, text));
+        const response = await api.raggrapQuery(
+          contextPrompt(symbol, timeframe, text, effectiveCommunity),
+        );
         setMessages((previous) => [
           ...previous,
           { id: `b${serial.current++}`, role: "bot", text: response.answer },
@@ -75,7 +98,7 @@ export function BotPanel({ onClose }: { onClose?: () => void }) {
         inputRef.current?.focus();
       }
     },
-    [busy, symbol, timeframe],
+    [busy, symbol, timeframe, effectiveCommunity],
   );
 
   const quickAction = (label: string) => () => void submit(label);
@@ -92,6 +115,7 @@ export function BotPanel({ onClose }: { onClose?: () => void }) {
             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <span className="size-1.5 rounded-full bg-bull" />
               Online · {symbol} {timeframe}
+              {effectiveCommunity ? <> · Community</> : null}
             </div>
           </div>
         </div>
@@ -102,14 +126,26 @@ export function BotPanel({ onClose }: { onClose?: () => void }) {
         ) : null}
       </div>
 
+      {effectiveCommunity ? (
+        <div className="border-b border-border bg-muted/30 px-4 py-2">
+          <div className="text-[11px] font-medium text-muted-foreground">
+            Community context: {effectiveCommunity.label}
+          </div>
+          <p className="line-clamp-2 text-[11px] text-muted-foreground/80">
+            {effectiveCommunity.detail}
+          </p>
+        </div>
+      ) : null}
+
       {messages.length === 0 ? (
         <div className="flex-1 space-y-2 overflow-y-auto px-4 py-4">
           <p className="text-xs text-muted-foreground">
-            Hi! I&apos;m the Pkay market assistant. Ask me anything about the market — I have context
-            on the chart you&apos;re currently viewing.
+            {effectiveCommunity
+              ? "Hi! I have context on what you're viewing in the community. Ask me to analyze the post, chart, market or discussion."
+              : "Hi! I'm the Pkay market assistant. Ask me anything about the market — I have context on the chart you're currently viewing."}
           </p>
           <div className="grid grid-cols-1 gap-2 pt-1">
-            {QUICK_ACTIONS.map((action) => (
+            {quickActions.map((action) => (
               <button
                 key={action}
                 type="button"
