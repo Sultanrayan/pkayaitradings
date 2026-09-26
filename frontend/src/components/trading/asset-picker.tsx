@@ -12,9 +12,10 @@ import type { Tick } from "@/lib/types";
 
 /**
  * Asset selector: search + favourite list. Selecting an asset updates the
- * chart while preserving the selected timeframe.
+ * chart while preserving the selected timeframe. `onSelect` is called after
+ * an asset is chosen (used by dropdown wrappers to close the menu).
  */
-export function AssetPicker() {
+export function AssetPicker({ onSelect }: { onSelect?: () => void }) {
   const { symbols, symbol, setSymbol, ticks } = useMarketContext();
   const { symbols: watched, toggle, contains } = useWatchlist();
   const [query, setQuery] = useState("");
@@ -25,6 +26,11 @@ export function AssetPicker() {
     if (!normalized) return symbols;
     return symbols.filter((item) => item.includes(normalized));
   }, [symbols, normalized]);
+
+  const pick = (item: string) => {
+    setSymbol(item);
+    onSelect?.();
+  };
 
   const favouriteAssets = symbols.filter((item) => watched.includes(item));
 
@@ -46,7 +52,7 @@ export function AssetPicker() {
             Favourites
           </div>
           {favouriteAssets.map((item) => (
-            <AssetRow key={item} item={item} ticks={ticks} active={item === symbol} onSelect={setSymbol} onToggle={toggle} watched />
+            <AssetRow key={item} item={item} ticks={ticks} active={item === symbol} onSelect={pick} onToggle={toggle} watched />
           ))}
         </div>
       ) : null}
@@ -56,7 +62,7 @@ export function AssetPicker() {
           All assets
         </div>
         {filtered.map((item) => (
-          <AssetRow key={item} item={item} ticks={ticks} active={item === symbol} onSelect={setSymbol} onToggle={toggle} watched={contains(item)} />
+          <AssetRow key={item} item={item} ticks={ticks} active={item === symbol} onSelect={pick} onToggle={toggle} watched={contains(item)} />
         ))}
         {filtered.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">

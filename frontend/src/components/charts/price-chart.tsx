@@ -43,7 +43,7 @@ export interface PriceChartProps {
   overlays: ChartOverlays;
   levels?: { support?: number | null; resistance?: number | null };
   markers?: ChartMarker[];
-  height?: number;
+  height?: number | "auto";
   chartType?: ChartType;
 }
 
@@ -136,8 +136,11 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
       } = await import("lightweight-charts");
       if (disposed || !containerRef.current) return;
 
+      const isAuto = height === "auto";
       const chart = createChart(containerRef.current, {
-        height,
+        ...(isAuto
+          ? { autosize: true }
+          : { height: height as number, autosize: false }),
         layout: {
           background: { type: ColorType.Solid, color: "transparent" },
           textColor: "#8b8b8b",
@@ -211,11 +214,15 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
       bbLower.setData(toLineData(timesRef.current, data.bb.lower));
       chart.timeScale().fitContent();
 
-      resizeObserver = new ResizeObserver((entries) => {
-        const entry = entries[0];
-        if (entry) chart.applyOptions({ width: entry.contentRect.width });
-      });
-      resizeObserver.observe(containerRef.current);
+      // Fixed heights: keep width in sync ourselves. "auto" uses the chart's
+      // built-in autosize (it observes its own container), so no manual updates.
+      if (height !== "auto") {
+        resizeObserver = new ResizeObserver((entries) => {
+          const entry = entries[0];
+          if (entry) chart.applyOptions({ width: entry.contentRect.width });
+        });
+        resizeObserver.observe(containerRef.current);
+      }
     })();
 
     return () => {
@@ -298,7 +305,7 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
     );
   }, [markers, series]);
 
-  return <div ref={containerRef} className="w-full" />;
+  return <div ref={containerRef} className={height === "auto" ? "h-full w-full" : "w-full"} />;
 });
 
 function setPriceData(

@@ -1,59 +1,58 @@
 "use client";
 
+import { ChevronDown } from "lucide-react";
+
 import { useMarketContext } from "@/components/symbol-provider";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { MARKET_TIMEFRAMES } from "@/lib/constants";
 
 /**
- * Timeframe control around the chart. Renders a segmented bar on desktop and a
- * dropdown on small screens; always keeps the selected timeframe active.
+ * TradingView-style timeframe control: a single trigger that reveals the
+ * timeframe menu only when clicked. Preserves the selected asset.
  */
 export function TimeframeSelector() {
   const { timeframe, setTimeframe } = useMarketContext();
+  const active = MARKET_TIMEFRAMES.find((item) => item.value === timeframe);
+  const label = active?.label ?? timeframe;
 
   return (
-    <div className="flex items-center gap-2">
-      <div className="hidden items-center gap-0.5 rounded-lg border border-border bg-card p-0.5 sm:flex">
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Change timeframe"
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+        >
+          {label}
+          <ChevronDown className="size-3.5 text-muted-foreground" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-28">
+        <DropdownMenuLabel>Timeline</DropdownMenuLabel>
+        <DropdownMenuSeparator />
         {MARKET_TIMEFRAMES.map((item) => {
-          const active = item.value === timeframe;
+          const activeItem = item.value === timeframe;
           return (
-            <button
+            <DropdownMenuItem
               key={item.value}
-              type="button"
-              onClick={() => setTimeframe(item.value)}
-              aria-pressed={active}
-              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                active
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
-              }`}
+              onSelect={() => setTimeframe(item.value)}
+              className={activeItem ? "bg-accent font-medium" : undefined}
             >
-              {item.label}
-            </button>
+              <span className="flex w-full items-center justify-between gap-4">
+                {item.label}
+                {activeItem ? <span className="size-1.5 rounded-full bg-foreground" /> : null}
+              </span>
+            </DropdownMenuItem>
           );
         })}
-      </div>
-
-      <div className="sm:hidden">
-        <Select value={timeframe} onValueChange={(value) => setTimeframe(value as typeof timeframe)}>
-          <SelectTrigger className="w-28">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {MARKET_TIMEFRAMES.map((item) => (
-              <SelectItem key={item.value} value={item.value}>
-                {item.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-    </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

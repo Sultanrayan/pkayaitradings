@@ -1,26 +1,27 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { Camera, Maximize2, Minimize2, SlidersHorizontal } from "lucide-react";
-import { cn } from "cn";
+import { Camera, Maximize2, Minimize2, Settings2, ZoomIn } from "lucide-react";
 
 import { PriceChart, type ChartMarker, type ChartOverlays, type PriceChartHandle } from "@/components/charts/price-chart";
 import { IndicatorChart } from "@/components/charts/indicator-chart";
-import { AssetHeader } from "@/components/trading/asset-header";
-import { AssetPicker } from "@/components/trading/asset-picker";
+import { PairSelector } from "@/components/trading/pair-selector";
 import { TimeframeSelector } from "@/components/trading/timeframe-selector";
 import { useMarketContext } from "@/components/symbol-provider";
 import { Button } from "@/components/ui/button";
-import { EmptyState, ErrorNote, LoadingRows } from "@/components/shared/primitives";
+import { ErrorNote, EmptyState, LoadingRows } from "@/components/shared/primitives";
 import { useOhlc } from "@/hooks/use-ohlc";
 import { useSignals } from "@/hooks/use-api";
+import { useWatchlist } from "@/hooks/use-watchlist";
 import { atr, bollinger, ema, macd, rsi, stochastic } from "@/lib/indicators";
+import { cn } from "cn";
+import { formatPrice, formatSignedPercent } from "@/lib/format";
 import type { ChartType, OhlcBar, SignalRecord } from "@/lib/types";
 
-const CHART_TYPES: Array<{ key: ChartType; label: string }> = [
-  { key: "candlestick", label: "Candles" },
-  { key: "line", label: "Line" },
-  { key: "area", label: "Area" },
+const CHART_TYPES: Array<{ key: ChartType; label: string; icon: string }> = [
+  { key: "candlestick", label: "Candles", icon: "▮" },
+  { key: "line", label: "Line", icon: "—" },
+  { key: "area", label: "Area", icon: "◔" },
 ];
 
 const OVERLAY_LABELS: Array<{ key: keyof ChartOverlays; label: string; color: string }> = [
@@ -79,10 +80,16 @@ function signalsToMarkers(bars: OhlcBar[], signals: SignalRecord[]): ChartMarker
   return markers;
 }
 
+/**
+ * Fullscreen TradingView-style dashboard. The chart fills the viewport beneath
+ * the fixed navbar; the pair and timeframe selectors are dropdown-only, and
+ * extra chart chrome is tucked behind the settings menu.
+ */
 export function DashboardView() {
-  const { symbol, timeframe } = useMarketContext();
+  const { symbol, timeframe, activeTick } = useMarketContext();
   const { series, loading, error } = useOhlc(symbol, timeframe, 400);
   const signals = useSignals({ symbol, agent: "technical_analyst", limit: 60 });
+  const { contains, toggle } = useWatchlist();
   const chartRef = useRef<PriceChartHandle | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -148,203 +155,169 @@ export function DashboardView() {
   const toggleIndicator = (key: IndicatorKey) =>
     setIndicators((previous) => ({ ...previous, [key]: !previous[key] }));
 
-  return (
-    <div className="space-y-4">
-      <AssetHeader />
+  const watched = contains(symbol);
+  const change = activeTick?.dayDiffPercent ?? null;
+  const changeTone = change === null ? "text-muted-foreground" : change >= 0 ? "text-bull" : "text-bear";
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+  const panesOn = INDICATOR_LABELS.some((indicator) => indicators[indicator.key]);
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Top bar: pair + timeframe (dropdown-only), price, chart controls */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-card px-3 py-2">
+        <PairSelector />
+        <span className="mx-1 h-4 w-px bg-border" />
         <TimeframeSelector />
-        <div className="flex items-center gap-1.5">
-          <div className="flex items-center gap-0.5 rounded-lg border border-border bg-card p-0.5">
+
+        <div className="ml-2 flex min-w-0 items-center gap-2">
+          <span className="tabular text-sm font-semibold">{formatPrice(activeTick?.mid)}</span>
+          <span className={cn("tabular text-xs font-medium", changeTone)}>{formatSignedPercent(change)}</span>
+          <button
+            type="button"
+            aria-label={watched ? "Remove from watchlist" : "Add to watchlist"}
+            onClick={() => toggle(symbol)}
+            className={cn(
+              "rounded p-1 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+              watched ? "text-gold" : "text-muted-foreground",
+            )}
+          >
+            <svg viewBox="0 0 24 24" fill={watched ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" className="size-4">
+              <path d="M11.5 4.5l2.1 4.3 4.7.7-3.4 3.3.8 4.7-4.2-2.2-4.2 2.2.8-4.7-3.4-3.3 4.7-.7z" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="ml-auto flex items-center gap-1.5">
+          <div className="flex items-center overflow-hidden rounded-md border border-border">
             {CHART_TYPES.map((type) => (
               <button
                 key={type.key}
                 type="button"
                 onClick={() => setChartType(type.key)}
+                title={type.label}
+                aria-label={type.label}
                 className={cn(
-                  "rounded-md px-2 py-1 text-xs font-medium transition-colors",
-                  chartType === type.key
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:text-foreground",
+                  "h-8 px-2 text-xs transition-colors",
+                  chartType === type.key ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50",
                 )}
               >
-                {type.label}
+                {type.icon}
               </button>
             ))}
           </div>
-
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => chartRef.current?.fitContent()}>
-            <SlidersHorizontal className="size-3.5" />
-            Fit
+          <Button variant="ghost" size="icon" title="Chart settings" aria-label="Chart settings" onClick={() => setSettingsOpen((v) => !v)}>
+            <Settings2 className={cn("size-4", settingsOpen && "text-foreground")} />
           </Button>
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => chartRef.current?.screenshot()}>
-            <Camera className="size-3.5" />
-            PNG
+          <Button variant="ghost" size="icon" title="Fit content" aria-label="Fit content" onClick={() => chartRef.current?.fitContent()}>
+            <ZoomIn className="size-4" />
           </Button>
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void toggleFullscreen()}>
-            {fullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-            {fullscreen ? "Exit" : "Full"}
+          <Button variant="ghost" size="icon" title="Screenshot (PNG)" aria-label="Screenshot (PNG)" onClick={() => chartRef.current?.screenshot()}>
+            <Camera className="size-4" />
+          </Button>
+          <Button variant="ghost" size="icon" title={fullscreen ? "Exit fullscreen" : "Fullscreen"} aria-label="Toggle fullscreen" onClick={() => void toggleFullscreen()}>
+            {fullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
           </Button>
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <div
-          ref={containerRef}
-          className={cn(
-            "space-y-4 rounded-xl bg-card p-3 ring-1 ring-border",
-            fullscreen && "fixed inset-0 z-[60] overflow-auto rounded-none p-4",
-          )}
-        >
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-3 text-xs">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Overlays</span>
-            {OVERLAY_LABELS.map((overlay) => (
-              <button
-                key={overlay.key}
-                type="button"
-                onClick={() => toggleOverlay(overlay.key)}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] transition-colors",
-                  overlays[overlay.key]
-                    ? "border-border bg-accent text-foreground"
-                    : "border-border text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <span className="size-1.5 rounded-full" style={{ background: overlay.color }} />
-                {overlay.label}
-              </button>
-            ))}
-            <span className="ml-2 text-[11px] uppercase tracking-wider text-muted-foreground">Panes</span>
-            {INDICATOR_LABELS.map((indicator) => (
-              <button
-                key={indicator.key}
-                type="button"
-                onClick={() => toggleIndicator(indicator.key)}
-                className={cn(
-                  "rounded-full border px-2 py-0.5 text-[11px] transition-colors",
-                  indicators[indicator.key]
-                    ? "border-border bg-accent text-foreground"
-                    : "border-border text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {indicator.label}
-              </button>
-            ))}
+      {/* Collapsible settings: overlays + indicator panes */}
+      {settingsOpen ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border bg-muted/30 px-3 py-1.5 text-xs">
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Overlays</span>
+          {OVERLAY_LABELS.map((overlay) => (
             <button
+              key={overlay.key}
               type="button"
-              onClick={() => setSettingsOpen((value) => !value)}
-              className="ml-auto rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+              onClick={() => toggleOverlay(overlay.key)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] transition-colors",
+                overlays[overlay.key] ? "border-border bg-accent text-foreground" : "border-border text-muted-foreground hover:text-foreground",
+              )}
             >
-              {settingsOpen ? "Hide settings" : "Chart settings"}
+              <span className="size-1.5 rounded-full" style={{ background: overlay.color }} />
+              {overlay.label}
             </button>
-          </div>
+          ))}
+          <span className="ml-2 text-[11px] uppercase tracking-wider text-muted-foreground">Panes</span>
+          {INDICATOR_LABELS.map((indicator) => (
+            <button
+              key={indicator.key}
+              type="button"
+              onClick={() => toggleIndicator(indicator.key)}
+              className={cn(
+                "rounded-full border px-2 py-0.5 text-[11px] transition-colors",
+                indicators[indicator.key] ? "border-border bg-accent text-foreground" : "border-border text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {indicator.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
-          {settingsOpen ? (
-            <div className="rounded-lg border border-border p-3 text-sm">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Type</div>
-                  <div className="flex gap-1">
-                    {CHART_TYPES.map((type) => (
-                      <button
-                        key={type.key}
-                        type="button"
-                        onClick={() => setChartType(type.key)}
-                        className={cn(
-                          "rounded-md border px-2 py-1 text-xs",
-                          chartType === type.key ? "border-foreground bg-accent text-foreground" : "border-border text-muted-foreground",
-                        )}
-                      >
-                        {type.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Data</div>
-                  <div className="text-xs text-muted-foreground">
-                    {bars.length} candles · {timeframe} · {symbol}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
+      {error ? (
+        <div className="px-3 py-2">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      ) : null}
 
-          {error ? <ErrorNote>{error}</ErrorNote> : null}
-
-          {loading && bars.length === 0 ? (
-            <LoadingRows rows={6} />
-          ) : bars.length === 0 ? (
+      {/* Chart fills the remaining screen height; panes shrink it when enabled */}
+      <div ref={containerRef} className="relative flex min-h-0 flex-1 flex-col bg-card">
+        {loading && bars.length === 0 ? (
+          <LoadingRows rows={6} className="h-full" />
+        ) : bars.length === 0 ? (
+          <div className="flex h-full items-center justify-center p-4">
             <EmptyState>No candle data available for {symbol}.</EmptyState>
-          ) : (
-            <>
+          </div>
+        ) : (
+          <>
+            <div className={cn("min-h-0 w-full", panesOn ? "flex-[3]" : "flex-1")}>
               <PriceChart
                 ref={chartRef}
                 bars={bars}
                 overlays={overlays}
                 levels={levels}
                 markers={markers}
-                height={fullscreen ? 620 : 440}
+                height="auto"
                 chartType={chartType}
               />
-
-              {computed && indicators.rsi ? (
-                <IndicatorChart
-                  title="RSI (14)"
-                  bars={bars}
-                  references={[30, 70]}
-                  lines={[{ label: "RSI", color: "#eab308", values: computed.rsi }]}
-                />
-              ) : null}
-
-              {computed && indicators.macd ? (
-                <IndicatorChart
-                  title="MACD (12,26,9)"
-                  bars={bars}
-                  references={[0]}
-                  histogram={computed.macd.histogram}
-                  lines={[
-                    { label: "MACD", color: "#3b82f6", values: computed.macd.macd },
-                    { label: "Signal", color: "#f97316", values: computed.macd.signal },
-                  ]}
-                />
-              ) : null}
-
-              {computed && indicators.atr ? (
-                <IndicatorChart
-                  title="ATR (14)"
-                  bars={bars}
-                  lines={[{ label: "ATR", color: "#a855f7", values: computed.atr }]}
-                />
-              ) : null}
-
-              {computed && indicators.stochastic ? (
-                <IndicatorChart
-                  title="Stochastic (14,3)"
-                  bars={bars}
-                  references={[20, 80]}
-                  lines={[
-                    { label: "%K", color: "#3b82f6", values: computed.stochastic.k },
-                    { label: "%D", color: "#f97316", values: computed.stochastic.d },
-                  ]}
-                />
-              ) : null}
-            </>
-          )}
-        </div>
-
-        <aside className="hidden lg:block">
-          <div className="sticky top-[4.5rem] rounded-xl bg-card p-3 ring-1 ring-border">
-            <div className="mb-3 px-1 text-[11px] uppercase tracking-wider text-muted-foreground">
-              Assets
             </div>
-            <AssetPicker />
-          </div>
-        </aside>
-      </div>
 
-      <div className="lg:hidden">
-        <AssetPicker />
+            {panesOn ? (
+              <div className="max-h-[45%] w-full shrink-0 overflow-y-auto border-t border-border">
+                {computed && indicators.rsi ? (
+                  <IndicatorChart title="RSI (14)" bars={bars} references={[30, 70]} lines={[{ label: "RSI", color: "#eab308", values: computed.rsi }]} />
+                ) : null}
+                {computed && indicators.macd ? (
+                  <IndicatorChart
+                    title="MACD (12,26,9)"
+                    bars={bars}
+                    references={[0]}
+                    histogram={computed.macd.histogram}
+                    lines={[
+                      { label: "MACD", color: "#3b82f6", values: computed.macd.macd },
+                      { label: "Signal", color: "#f97316", values: computed.macd.signal },
+                    ]}
+                  />
+                ) : null}
+                {computed && indicators.atr ? (
+                  <IndicatorChart title="ATR (14)" bars={bars} lines={[{ label: "ATR", color: "#a855f7", values: computed.atr }]} />
+                ) : null}
+                {computed && indicators.stochastic ? (
+                  <IndicatorChart
+                    title="Stochastic (14,3)"
+                    bars={bars}
+                    references={[20, 80]}
+                    lines={[
+                      { label: "%K", color: "#3b82f6", values: computed.stochastic.k },
+                      { label: "%D", color: "#f97316", values: computed.stochastic.d },
+                    ]}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+          </>
+        )}
       </div>
     </div>
   );
