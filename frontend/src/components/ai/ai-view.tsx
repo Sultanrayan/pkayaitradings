@@ -6,6 +6,7 @@ import { Menu, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { cn } from "cn";
 
 import { PromptInput, type PromptMeta } from "@/components/ui/ai-chat-input";
+import { AITextLoading } from "@/components/ui/ai-text-loading";
 import { Button } from "@/components/ui/button";
 import { useMarketContext } from "@/components/symbol-provider";
 import { api } from "@/lib/api";
@@ -279,12 +280,6 @@ export function AiView() {
                     )}
                   >
                     {message.role === "assistant" ? (
-                      <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                        <Sparkles className="size-3 text-gold" />
-                        Pkay AI · {message.model}
-                      </span>
-                    ) : null}
-                    {message.role === "assistant" ? (
                       <div className="w-full whitespace-pre-wrap break-words pb-1 text-[15px] leading-relaxed text-foreground">
                         {message.text}
                       </div>
@@ -298,12 +293,8 @@ export function AiView() {
               )}
 
               {busy ? (
-                <div className="flex items-start gap-1.5">
-                  <span className="mt-0.5 flex gap-1">
-                    <span className="size-1.5 animate-bounce rounded-full bg-foreground/60 [animation-delay:-0.3s]" />
-                    <span className="size-1.5 animate-bounce rounded-full bg-foreground/60 [animation-delay:-0.15s]" />
-                    <span className="size-1.5 animate-bounce rounded-full bg-foreground/60" />
-                  </span>
+                <div className="flex w-full justify-center py-2">
+                  <AITextLoading />
                 </div>
               ) : null}
               <div ref={bottomRef} />
