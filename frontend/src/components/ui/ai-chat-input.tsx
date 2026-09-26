@@ -398,7 +398,7 @@ export function PromptInput({
         onBlur={handleBlur}
         className={cn("relative flex w-full flex-col", className)}
         style={{
-          maxWidth: focused ? 480 : 320,
+          maxWidth: focused ? 600 : 380,
           transition: focused
             ? "max-width 0.15s ease-out"
             : "max-width 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)",
@@ -477,7 +477,7 @@ export function PromptInput({
           }}
           style={{
             borderRadius: 24,
-            height: focused ? height : 48,
+            height: focused ? height : 52,
             transition: focused
               ? undefined
               : `all 0.4s ${EASE}`,
@@ -510,7 +510,7 @@ export function PromptInput({
                 : "opacity 0.3s ease-out, transform 0.3s ease-out, height 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)",
             }}
             className={cn(
-              "absolute inset-x-0 top-0 z-[1] w-full resize-none bg-transparent py-3.5 pl-4 pr-12 text-sm leading-[22px] text-foreground outline-none placeholder:font-medium placeholder:text-muted-foreground/80",
+              "absolute inset-x-0 top-0 z-[1] w-full resize-none bg-transparent py-3.5 pl-5 pr-12 text-[15px] leading-[22px] text-foreground outline-none placeholder:font-medium placeholder:text-muted-foreground/80",
               focused
                 ? "translate-y-0 scale-100 opacity-100"
                 : "pointer-events-none -translate-y-1 scale-95 opacity-0",
@@ -537,7 +537,7 @@ export function PromptInput({
             style={{ transition: focused ? "none" : `all 0.4s ${EASE}` }}
             aria-label="Open prompt input"
             className={cn(
-              "absolute inset-x-0 top-0 z-[1] cursor-text py-[15px] pl-4 pr-12 text-left text-sm font-medium leading-[17px] text-muted-foreground/80 outline-none",
+              "absolute inset-x-0 top-0 z-[1] cursor-text py-[17px] pl-5 pr-12 text-left text-[15px] font-medium leading-[17px] text-muted-foreground/80 outline-none",
               focused
                 ? "pointer-events-none translate-y-1 scale-105 opacity-0"
                 : "translate-y-0 scale-100 opacity-100",
