@@ -186,3 +186,118 @@ export function demoSourceInterval(timeframe: ChartTimeframe): Timeframe {
   if (timeframe === "W1" || timeframe === "MN") return "D1";
   return timeframe;
 }
+
+/**
+ * Demo signal cards for the Signals page. Each cycle emits the four agent
+ * records (technical / news / risk / decision) for a symbol so the consensus
+ * panel and the card grid have data without a running backend. Decision
+ * records carry a full trade plan (entry / SL / TP) for the card UI.
+ */
+export function generateDemoSignalCards(
+  symbols: string[] = demoAssetSymbols(),
+  cycles = 8,
+): SignalRecord[] {
+  const records: SignalRecord[] = [];
+  const now = Date.now();
+
+  symbols.forEach((symbol, symbolIndex) => {
+    const asset = demoAsset(symbol);
+    const rand = mulberry32(hashSeed(`cards:${symbol}:${cycles}`));
+
+    for (let cycle = 0; cycle < cycles; cycle += 1) {
+      const correlation_id = `demo-cycle-${symbol}-${cycle}`;
+      const bullish = rand() > 0.45;
+      const entry = asset.base * (1 - 0.004 + rand() * 0.008);
+      const range = 0.003 + rand() * 0.004; // fraction of price, not absolute
+      const sl = bullish ? entry * (1 - range) : entry * (1 + range);
+      const tp = bullish ? entry * (1 + range * (1.5 + rand())) : entry * (1 - range * (1.5 + rand()));
+      const confidence = 0.55 + rand() * 0.4;
+      const ts = now - (symbolIndex * cycles + cycle) * 17 * 60_000;
+
+      records.push(
+        {
+          id: `demo-${symbol}-${cycle}-tech`,
+          correlation_id,
+          symbol,
+          agent: "technical_analyst",
+          kind: "technical_signal",
+          direction: bullish ? "BULLISH" : "BEARISH",
+          confidence: Number((confidence - 0.05 + rand() * 0.1).toFixed(3)),
+          created_at: new Date(ts).toISOString(),
+          payload: {
+            signal: bullish ? "BULLISH" : "BEARISH",
+            price: Number(entry.toFixed(4)),
+            key_levels: {
+              support: Number((bullish ? sl : tp).toFixed(4)),
+              resistance: Number((bullish ? tp : sl).toFixed(4)),
+            },
+            reasoning: bullish
+              ? `Momentum and trend filters align on ${symbol}; price is holding above the breakout level with buyers defending the near support.`
+              : `Sellers rejected the upper range on ${symbol}; momentum is fading and the regression filter flashed a short warning.`,
+          },
+        },
+        {
+          id: `demo-${symbol}-${cycle}-news`,
+          correlation_id,
+          symbol,
+          agent: "news_monitor",
+          kind: "news_signal",
+          direction: bullish ? "BULLISH" : "BEARISH",
+          confidence: Number((0.5 + rand() * 0.3).toFixed(3)),
+          created_at: new Date(ts).toISOString(),
+          payload: {
+            event: bullish ? "Stronger-than-expected US economic data" : "Risk-off headlines lifted volatility",
+            impact: bullish ? "MEDIUM" : "HIGH",
+            sentiment: bullish ? "BULLISH" : "BEARISH",
+            reasoning: bullish
+              ? `Macro headlines were supportive on the demo feed and historical reactions point to continued upside drift.`
+              : `Headlines carried a negative tilt and similar events in the demo history saw immediate downside pressure.`,
+          },
+        },
+        {
+          id: `demo-${symbol}-${cycle}-risk`,
+          correlation_id,
+          symbol,
+          agent: "risk_manager",
+          kind: "risk_assessment",
+          direction: "APPROVED",
+          confidence: 1,
+          created_at: new Date(ts).toISOString(),
+          payload: {
+            approved: true,
+            position_size: Number((0.5 + rand() * 1.5).toFixed(2)),
+            leverage: 1,
+            stop_loss: Number(sl.toFixed(4)),
+            take_profit: Number(tp.toFixed(4)),
+            var_95: Number((range * 0.9).toFixed(4)),
+            reasoning: `VaR stays inside the demo budget with stops placed beyond the swing, so the plan is approved at full size.`,
+          },
+        },
+        {
+          id: `demo-${symbol}-${cycle}-decision`,
+          correlation_id,
+          symbol,
+          agent: "decision_maker",
+          kind: "trade_decision",
+          direction: bullish ? "BUY" : "SELL",
+          confidence: Number(confidence.toFixed(3)),
+          created_at: new Date(ts).toISOString(),
+          payload: {
+            decision: bullish ? "BUY" : "SELL",
+            final_score: Number(confidence.toFixed(3)),
+            entry_price: Number(entry.toFixed(4)),
+            stop_loss: Number(sl.toFixed(4)),
+            take_profit: Number(tp.toFixed(4)),
+            position_size: Number((0.5 + rand() * 1.5).toFixed(2)),
+            risk_approved: true,
+            reasoning: bullish
+              ? `Technical, news and risk agents align on ${symbol}. Entry ${entry.toFixed(2)}, initial target ${tp.toFixed(2)} with the stop at ${sl.toFixed(2)} – the reward sits well above the measured risk.`
+              : `Technical and news agents agree on downside for ${symbol}. Entry ${entry.toFixed(2)} targeting ${tp.toFixed(2)} with the protective stop at ${sl.toFixed(2)}.`,
+          },
+        },
+      );
+    }
+  });
+
+  return records;
+}

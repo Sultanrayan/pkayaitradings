@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { Download, FileJson, Filter, Layers } from "lucide-react";
-import { cn } from "cn";
 
 import { useMarketContext } from "@/components/symbol-provider";
 import {
@@ -14,16 +13,8 @@ import {
   Panel,
   TonePill,
 } from "@/components/shared/primitives";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
+import { SignalCard } from "@/components/signals/signal-card";
+import { SignalDetailDialog } from "@/components/signals/signal-detail";
 import {
   Select,
   SelectContent,
@@ -32,10 +23,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { useDemoMode } from "@/hooks/use-demo-market";
 import { useSignals } from "@/hooks/use-api";
 import { useNow } from "@/hooks/use-now";
 import { AGENTS, DECISIONS, SIGNAL_DIRECTIONS, agentName } from "@/lib/constants";
-import { directionTone, formatDateTime } from "@/lib/format";
+import { generateDemoSignalCards } from "@/lib/demo-data";
+import { directionTone } from "@/lib/format";
 import type { SignalRecord, SignalFilters } from "@/lib/types";
 
 const TIME_RANGES = [
@@ -71,15 +64,9 @@ function toCsv(records: SignalRecord[]): string {
   return [header.join(","), ...rows].join("\n");
 }
 
-function payloadEntries(record: SignalRecord): Array<[string, string]> {
-  const skip = new Set(["agent", "symbol", "generated_at", "reasoning"]);
-  return Object.entries(record.payload)
-    .filter(([key, value]) => !skip.has(key) && value !== null && typeof value !== "object")
-    .map(([key, value]) => [key, String(value)]);
-}
-
 export function SignalsView() {
   const { symbols } = useMarketContext();
+  const demo = useDemoMode();
   const [symbol, setSymbol] = useState<string>("all");
   const [agent, setAgent] = useState<string>("all");
   const [direction, setDirection] = useState<string>("all");
@@ -97,20 +84,26 @@ export function SignalsView() {
   }, [symbol, agent, direction, minConfidence]);
 
   const signals = useSignals(filters);
+  const demoSignals = useMemo<SignalRecord[]>(
+    () => (demo ? generateDemoSignalCards(symbols.length ? symbols : undefined, 8) : []),
+    [demo, symbols],
+  );
+
+  const source = demo ? demoSignals : signals.data;
   const now = useNow(30_000);
 
   const filtered = useMemo(() => {
     const range = TIME_RANGES.find((item) => item.value === timeRange);
-    if (!range?.minutes) return signals.data;
+    if (!range?.minutes) return source;
     const cutoff = now - range.minutes * 60_000;
-    return signals.data.filter((record) => new Date(record.created_at).getTime() >= cutoff);
-  }, [signals.data, timeRange, now]);
+    return source.filter((record) => new Date(record.created_at).getTime() >= cutoff);
+  }, [source, timeRange, now]);
 
   const latestCycle = useMemo(() => {
-    if (!signals.data.length) return [];
-    const correlationId = signals.data[0].correlation_id;
-    return signals.data.filter((record) => record.correlation_id === correlationId);
-  }, [signals.data]);
+    if (!source.length) return [];
+    const correlationId = source[0].correlation_id;
+    return source.filter((record) => record.correlation_id === correlationId);
+  }, [source]);
 
   const consensus = useMemo(() => {
     if (!latestCycle.length) return null;
@@ -125,29 +118,27 @@ export function SignalsView() {
     <div className="space-y-6">
       <PageHeader
         title="Signals & Analysis Feed"
-        description="Every agent signal with filtering, consensus and export."
+        description="Every agent signal as a card — 3 per row, open one for the full chart and rationale."
         actions={
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
+            <button
+              type="button"
               onClick={() => download("signals.csv", toCsv(filtered), "text/csv")}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-accent"
             >
               <Download className="size-3.5" />
               CSV
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
+            </button>
+            <button
+              type="button"
               onClick={() =>
                 download("signals.json", JSON.stringify(filtered, null, 2), "application/json")
               }
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-accent"
             >
               <FileJson className="size-3.5" />
               JSON
-            </Button>
+            </button>
           </div>
         }
       />
@@ -162,7 +153,7 @@ export function SignalsView() {
       >
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="space-y-2">
-            <Label>Symbol</Label>
+            <label className="text-xs font-medium text-muted-foreground">Symbol</label>
             <Select value={symbol} onValueChange={setSymbol}>
               <SelectTrigger>
                 <SelectValue />
@@ -179,7 +170,7 @@ export function SignalsView() {
           </div>
 
           <div className="space-y-2">
-            <Label>Agent</Label>
+            <label className="text-xs font-medium text-muted-foreground">Agent</label>
             <Select value={agent} onValueChange={setAgent}>
               <SelectTrigger>
                 <SelectValue />
@@ -196,7 +187,7 @@ export function SignalsView() {
           </div>
 
           <div className="space-y-2">
-            <Label>Direction</Label>
+            <label className="text-xs font-medium text-muted-foreground">Direction</label>
             <Select value={direction} onValueChange={setDirection}>
               <SelectTrigger>
                 <SelectValue />
@@ -213,7 +204,7 @@ export function SignalsView() {
           </div>
 
           <div className="space-y-2">
-            <Label>Time range</Label>
+            <label className="text-xs font-medium text-muted-foreground">Time range</label>
             <Select value={timeRange} onValueChange={setTimeRange}>
               <SelectTrigger>
                 <SelectValue />
@@ -229,7 +220,9 @@ export function SignalsView() {
           </div>
 
           <div className="space-y-2 sm:col-span-2 lg:col-span-4">
-            <Label>Minimum confidence — {(minConfidence * 100).toFixed(0)}%</Label>
+            <label className="text-xs font-medium text-muted-foreground">
+              Minimum confidence — {(minConfidence * 100).toFixed(0)}%
+            </label>
             <Slider
               value={[minConfidence * 100]}
               max={100}
@@ -240,7 +233,7 @@ export function SignalsView() {
         </div>
       </Panel>
 
-      {signals.error ? <ErrorNote>{signals.error}</ErrorNote> : null}
+      {!demo && signals.error ? <ErrorNote>{signals.error}</ErrorNote> : null}
 
       {consensus ? (
         <Panel
@@ -271,93 +264,20 @@ export function SignalsView() {
         </Panel>
       ) : null}
 
-      <Panel title="Signal Timeline" description="Newest first — click a row for detail">
-        {signals.loading && signals.data.length === 0 ? (
-          <LoadingRows rows={8} />
-        ) : filtered.length === 0 ? (
-          <EmptyState>No signals match the current filters.</EmptyState>
-        ) : (
-          <div className="divide-y divide-border">
-            {filtered.map((record) => (
-              <button
-                key={record.id}
-                type="button"
-                onClick={() => setSelected(record)}
-                className="flex w-full items-center gap-4 py-2.5 text-left transition-colors hover:bg-accent/30"
-              >
-                <span className="w-28 shrink-0 text-xs text-muted-foreground">
-                  {formatDateTime(record.created_at)}
-                </span>
-                <Badge variant="outline" className="w-20 shrink-0 justify-center text-[10px]">
-                  {record.symbol}
-                </Badge>
-                <span className="w-36 shrink-0 truncate text-sm">{agentName(record.agent)}</span>
-                <TonePill label={record.direction} tone={directionTone(record.direction)} />
-                <div className="ml-auto w-40">
-                  <ConfidenceBar value={record.confidence} tone={directionTone(record.direction)} />
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </Panel>
+      {/* Card grid — one card per signal, 3 per row on xl screens */}
+      {signals.loading && !demo && source.length === 0 ? (
+        <LoadingRows rows={6} />
+      ) : filtered.length === 0 ? (
+        <EmptyState>No signals match the current filters.</EmptyState>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {filtered.map((record) => (
+            <SignalCard key={record.id} record={record} onSelect={setSelected} />
+          ))}
+        </div>
+      )}
 
-      <Dialog open={selected !== null} onOpenChange={(open) => !open && setSelected(null)}>
-        <DialogContent className="max-w-2xl bg-card">
-          {selected ? (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  {agentName(selected.agent)}
-                  <TonePill label={selected.direction} tone={directionTone(selected.direction)} />
-                </DialogTitle>
-                <DialogDescription>
-                  {selected.symbol} · {selected.kind.replace(/_/g, " ")} ·{" "}
-                  {formatDateTime(selected.created_at)}
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="space-y-4">
-                <div className="space-y-1">
-                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                    Confidence
-                  </div>
-                  <ConfidenceBar value={selected.confidence} tone={directionTone(selected.direction)} />
-                </div>
-
-                {typeof selected.payload.reasoning === "string" ? (
-                  <div className="space-y-1">
-                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                      Supporting evidence
-                    </div>
-                    <p className="text-sm text-muted-foreground">{selected.payload.reasoning}</p>
-                  </div>
-                ) : null}
-
-                <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-                  {payloadEntries(selected).map(([key, value]) => (
-                    <div key={key} className="flex items-center justify-between gap-2 text-xs">
-                      <span className="capitalize text-muted-foreground">
-                        {key.replace(/_/g, " ")}
-                      </span>
-                      <span className={cn("tabular text-right")}>{value}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <details className="rounded-lg border border-border p-3">
-                  <summary className="cursor-pointer text-xs text-muted-foreground">
-                    Raw payload
-                  </summary>
-                  <pre className="mt-2 max-h-64 overflow-auto text-[11px] leading-relaxed text-muted-foreground">
-                    {JSON.stringify(selected.payload, null, 2)}
-                  </pre>
-                </details>
-              </div>
-            </>
-          ) : null}
-        </DialogContent>
-      </Dialog>
+      <SignalDetailDialog record={selected} onOpenChange={(open) => !open && setSelected(null)} />
     </div>
   );
 }
