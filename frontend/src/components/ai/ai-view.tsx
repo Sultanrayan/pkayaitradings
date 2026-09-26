@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Menu, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { cn } from "cn";
@@ -109,16 +110,17 @@ export function AiView() {
   }, []);
 
   const submit = useCallback(
-    async (prompt: string, meta: PromptMeta) => {
+    async (prompt: string, meta?: PromptMeta) => {
       const trimmed = prompt.trim();
       if (!trimmed || busy) return;
+      const model = meta?.model ?? "Pkay AI";
       const sessionId = activeId ?? nextId("chat");
       if (!activeId) {
         const session: ChatSession = { id: sessionId, title: "New chat", createdAt: Date.now(), messages: [] };
         setChats((previous) => [session, ...previous].slice(0, MAX_SESSIONS));
         setActiveId(sessionId);
       }
-      const userMessage: ChatMessage = { id: nextId("msg"), role: "user", text: trimmed, model: meta.model };
+      const userMessage: ChatMessage = { id: nextId("msg"), role: "user", text: trimmed, model };
       setChats((previous) =>
         previous.map((chat) =>
           chat.id === sessionId
@@ -133,7 +135,7 @@ export function AiView() {
           id: nextId("msg"),
           role: "assistant",
           text: response.answer,
-          model: meta.model,
+          model,
         };
         setChats((previous) =>
           previous.map((chat) =>
@@ -147,7 +149,7 @@ export function AiView() {
           id: nextId("msg"),
           role: "assistant",
           text: "I couldn't reach the analysis engine right now. Please try again in a moment.",
-          model: meta.model,
+          model,
         };
         setChats((previous) =>
           previous.map((chat) =>
@@ -250,8 +252,15 @@ export function AiView() {
             <div className="mx-auto flex h-full max-w-3xl flex-col gap-5 px-4 py-6 md:py-8">
               {messages.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-                  <span className="flex size-11 items-center justify-center rounded-2xl bg-accent">
-                    <Sparkles className="size-5 text-gold" />
+                  <span className="relative size-11 overflow-hidden rounded-2xl ring-1 ring-border">
+                    <Image
+                      src="/logo-pkay.jpg"
+                      alt="Pkay"
+                      fill
+                      sizes="44px"
+                      priority
+                      className="object-cover"
+                    />
                   </span>
                   <div>
                     <div className="text-base font-medium">Start a conversation</div>
@@ -302,9 +311,9 @@ export function AiView() {
             </div>
           </div>
 
-          {/* Centered composer */}
+          {/* Centered composer (nudged slightly left for optical centering) */}
           <div className="flex justify-center px-3 pb-3 md:px-6 md:pb-5">
-            <div className="w-full max-w-3xl">
+            <div className="w-full max-w-3xl md:-mr-3">
               <PromptInput
                 key={activeId ?? "new"}
                 onSubmit={submit}
