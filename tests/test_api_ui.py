@@ -141,12 +141,22 @@ async def test_agents_endpoint(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v1/agents")
     assert response.status_code == 200
     names = {entry["name"] for entry in response.json()}
+    # Four agents. The Signal Updater was removed; it never ran in production
+    # and the entry existed only to satisfy the shape of the removed agent.
     assert names == {
         "technical_analyst",
         "news_monitor",
         "risk_manager",
         "decision_maker",
     }
+
+
+async def test_the_signal_updater_is_gone_from_the_agents_endpoint(
+    client: httpx.AsyncClient,
+) -> None:
+    """A regression guard: the removed agent must not reappear in the roster."""
+    response = await client.get("/api/v1/agents")
+    assert "signal_updater" not in {entry["name"] for entry in response.json()}
 
 
 async def test_performance_endpoint(client: httpx.AsyncClient) -> None:
