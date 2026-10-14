@@ -16,6 +16,24 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from shared.schemas.enums import Timeframe
 
+#: Provider billing units per US dollar, as published by the gateway's pricing.
+#: Together with :data:`shared.llm.COST_PER_TOKEN_UNITS` this converts the token
+#: counters into a real spend figure:
+#:
+#:     cost_units = (prompt_tokens + completion_tokens) * COST_PER_TOKEN_UNITS
+#:     cost_usd   = cost_units / UNITS_PER_USD
+#:
+#: A module constant rather than a :class:`Settings` field because it is a fact
+#: about the provider, not about this deployment — no environment variable
+#: should be able to silently misprice every log line. If the provider changes
+#: its rate, this constant is the one place to correct.
+UNITS_PER_USD = 25_000_000
+
+#: Addresses allowed into the admin console when ``ADMIN_EMAILS`` is unset or blank.
+#: Kept as a constant so the default and the blank-value fallback in
+#: ``Settings._parse_admin_emails`` cannot drift apart.
+DEFAULT_ADMIN_EMAILS: tuple[str, ...] = ("superpkay@gmail.com",)
+
 
 def _parse_list(value: object) -> object:
     """Accept a JSON array or a comma-separated string for list settings.
@@ -91,7 +109,49 @@ class Settings(BaseSettings):
     llm_api_key: str | None = None
     # Reasoning models spend tokens on hidden reasoning, so keep a generous
     # budget and timeout.
+    # --- Chat / query assistant (the `/ai` page) ---
+    # Separate from the analysis stack: chat is served by a fast, cheap model
+    # while analyses use the reasoning models below. Keys stay server-side and
+    # are never exposed to the browser.
+    chat_llm_model: str = "deepseek-v4.1-flash"
+    chat_llm_base_url: str = "https://api.relaymodels.com/v1"
+    chat_llm_api_key: str | None = None
+    chat_llm_max_tokens: int = 2000
+
+    # --- Analysis models ---
+    # Reasoning pass and the reviewing/second-opinion pass used by the
+    # analysis pipeline.
+    # Parsed from JSON in the environment, e.g.
+    # ANALYSIS_LLM_MODELS=["claude-opus-4-8","claude-opus-5-5"]
+    analysis_llm_models: list[str] = Field(
+        default_factory=lambda: ["claude-opus-4-8", "claude-opus-5-5"]
+    )
+    analysis_llm_base_url: str = "https://ru.cheapvibecode.ru/v1"
+    analysis_llm_api_key: str | None = None
+
     llm_timeout_seconds: float = 120.0
+    # Hard ceiling on the cumulative wall time of one ``complete()`` call
+    # across every retry attempt and backoff. Without this, ``llm_max_retries``
+    # bounds attempts but not elapsed time, so a single logical call could
+    # occupy a worker for timeout * (retries + 1) — measured at 544s, against a
+    # 300s analysis interval. The budget converts that stall into a bounded
+    # failure that degrades to the deterministic template.
+    llm_total_timeout_seconds: float = 240.0
+    # Per-attempt timeout for the analysis models. Measured latency to the
+    # gateway is 4-12s typical, ~33s at 6 concurrent and ~64s at 10; 429s
+    # appear above roughly 6 concurrent. An earlier 180s floor meant one retry
+    # could burn three minutes, and a 120s ceiling held a concurrency slot for
+    # two minutes, which serialised behind the semaphore instead of failing
+    # over. At 60s a slow call degrades to the template within a minute while
+    # all three attempts still fit inside llm_total_timeout_seconds
+    # (3 x 60 + 4.5 backoff = 184.5s), so retries are not sacrificed.
+    analysis_llm_timeout_seconds: float = 60.0
+    # Maximum analysis LLM calls in flight per process. The gateway rate-limits
+    # on concurrency: 0/429 observed at 6 concurrent, 2/10 at 10. Capping here
+    # bounds pressure at the single choke point every agent call passes through.
+    # Note this is per process, so N worker processes allow N * this many; the
+    # analysis interval is what normally keeps a single cycle in one worker.
+    analysis_max_concurrent_llm: int = 3
     llm_temperature: float = 0.2
     llm_max_tokens: int = 1500
     llm_max_retries: int = 2
@@ -157,16 +217,50 @@ class Settings(BaseSettings):
     llm_review_adjustment_max: float = 0.10
 
     # --- Plans & billing ---
-    # Limits are per billing period (``plan_billing_period_days``); ``-1`` means
-    # unlimited. Free = 20 analyses/month, Pro = 150/month, Ultra = unlimited.
-    plan_free_monthly_limit: int = 20
-    plan_pro_monthly_limit: int = 150
-    plan_ultra_monthly_limit: int = -1
-    plan_pro_price_usd: float = 15.0
-    plan_ultra_price_usd: float = 65.0
+    # Every plan has two independent caps and both are enforced: a daily cap that
+    # resets at 00:00 UTC, and a cap per billing period
+    # (``plan_billing_period_days``). A request is refused when either is reached.
+    # ``-1`` means unlimited.
+    #
+    #   plan      daily   monthly   price
+    #   free         2        60      $0
+    #   starter      8       240      $6
+    #   pro         20       600     $13
+    #   ultra      250     7 500    $250
+    plan_free_daily_limit: int = 2
+    plan_free_monthly_limit: int = 60
+    plan_starter_daily_limit: int = 8
+    plan_starter_monthly_limit: int = 240
+    plan_pro_daily_limit: int = 20
+    plan_pro_monthly_limit: int = 600
+    plan_ultra_daily_limit: int = 250
+    plan_ultra_monthly_limit: int = 7500
+    plan_starter_price_usd: float = 6.0
+    plan_pro_price_usd: float = 13.0
+    plan_ultra_price_usd: float = 250.0
     plan_billing_period_days: int = 30
-    # Free Pro trial length (days) granted via the "Pro plan" / "gifts" flow.
-    plan_trial_days: int = 60
+
+    # --- Anti-bot (credential endpoints) ---
+    # Google reCAPTCHA v2 protects login and register.
+    #
+    # The secret is server-side only: it is never returned by an endpoint, never
+    # logged and never sent to the browser. The frontend reads the *site* key as
+    # NEXT_PUBLIC_RECAPTCHA_SITE_KEY. An empty secret disables verification so local
+    # development and the test suite keep working.
+    recaptcha_secret_key: str = ""
+    recaptcha_verify_url: str = "https://www.google.com/recaptcha/api/siteverify"
+    # A submission faster than this was almost certainly scripted, and one older than
+    # this is a replayed timestamp.
+    recaptcha_min_form_seconds: float = 2.0
+    recaptcha_max_form_seconds: float = 86_400.0
+    # Per-IP ceilings on the credential endpoints, as a fixed window. Sized for a shared
+    # address rather than a single user: an office, a university or a mobile carrier
+    # can put hundreds of people behind one IP, so a tight ceiling would block real
+    # sign-ups. Sign-in is additionally covered by LoginRateLimiter, which counts
+    # failures and blocks for an hour.
+    auth_login_attempts_per_window: int = 10
+    auth_register_attempts_per_window: int = 10
+    auth_rate_limit_window_seconds: int = 900
 
     # --- Khpay (KHQR payments) ---
     # API key from khpay.site (``ak_...``). Empty disables checkout.
@@ -174,8 +268,47 @@ class Settings(BaseSettings):
     khpay_base_url: str = "https://khpay.site/api/v1"
     khpay_webhook_secret: str = ""
 
+    # --- Zenmux (agenza XAU/USD classifier) ---
+    #
+    # Base URL and routes are fixed by the endpoint guide (`endpoint-guide.md`).
+    # The key is server-side only: it is never sent to the browser, never placed
+    # in a URL, and never logged. An empty key disables the feature, which the
+    # API reports as a 503 rather than degrading to an invented prediction.
+    #
+    # Measured performance, for anyone reading this before trusting an output:
+    # ROC-AUC 0.51-0.53 under purged walk-forward validation (random is 0.50),
+    # and the cost-aware backtest is negative for both backends. A returned
+    # probability is the model's output, not a calibrated odds of profit.
+    zenmux_base_url: str = "https://router.pkay.fun/v1/agenza"
+    zenmux_api_key: str = ""
+    zenmux_default_backend: str = "xgboost"
+    zenmux_default_threshold: float = 0.5
+
     # --- Scheduler ---
-    analysis_interval_seconds: int = 300
+    # 900s, not 300s. A cycle is 4 sequential LLM stages (technical x3
+    # concurrent, then news, risk, decision). At 300s a slow cycle cannot
+    # finish before the next one is scheduled, so the queue grows without
+    # bound and each overlapping cycle adds provider pressure. Loosen only
+    # after sustained operation with no rate limiting.
+    analysis_interval_seconds: int = 900
+
+    # --- Signal engine (signals/) ---
+    # The bar-anchored signal engine is a separate subsystem from the four-agent
+    # cycle: it reads closed candles and emits BUY/SELL, and it never touches the
+    # LLM. Ships disabled so it can be deployed and observed before it starts
+    # publishing into the store the dashboard reads.
+    signal_engine_enabled: bool = False
+    # Confidence threshold profile. See ``signals.models.CONFIDENCE_THRESHOLDS``:
+    # aggressive 0.40, balanced 0.60, conservative 0.75.
+    signal_engine_mode: Literal["aggressive", "balanced", "conservative"] = "balanced"
+    # Bars per symbol per pass. The engine's own cooldown also applies, so the
+    # effective signal rate is the lower of the two.
+    signal_engine_interval_seconds: int = 900
+    # Minimum bars between two signals for the same symbol and timeframe.
+    signal_engine_min_bars_between_signals: int = 5
+    # Candles fetched per symbol. Must comfortably exceed the engine's warmup,
+    # which is bounded by ema_slow (200).
+    signal_engine_lookback: int = 400
 
     # --- API gateway ---
     cors_origins: Annotated[list[str], NoDecode] = Field(
@@ -237,16 +370,25 @@ class Settings(BaseSettings):
 
     # --- Admin ---
     admin_emails: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["menmengleapx1@gmail.com"]
+        default_factory=lambda: list(DEFAULT_ADMIN_EMAILS)
     )
 
     @field_validator("admin_emails", mode="before")
     @classmethod
     def _parse_admin_emails(cls, value: object) -> object:
-        """Accept a JSON array or comma-separated env var for admin emails."""
+        """Accept a JSON array or comma-separated env var for admin emails.
+
+        An unset *or blank* value falls back to :data:`DEFAULT_ADMIN_EMAILS` rather
+        than an empty list. Compose normally passes ``ADMIN_EMAILS=${ADMIN_EMAILS:-}``,
+        which arrives as an empty string whenever the operator has cleared the
+        variable; reading that as "nobody is an admin" would lock every administrator
+        out of the console, which is the opposite of what clearing the override is
+        meant to do.
+        """
         parsed = _parse_list(value)
         if isinstance(parsed, list):
-            return [str(item).strip().lower() for item in parsed]
+            cleaned = [str(item).strip().lower() for item in parsed if str(item).strip()]
+            return cleaned if cleaned else list(DEFAULT_ADMIN_EMAILS)
         return parsed
 
     @field_validator("cors_origins", mode="before")
