@@ -18,9 +18,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+import httpx
 from fastapi import (
     Depends,
     FastAPI,
+    Form,
     HTTPException,
     Query,
     Request,
@@ -29,13 +31,14 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, field_validator
 from starlette.responses import Response
 
 from data_pipeline.biquote_feed import BiquoteTickFeed
-from orchestrator import plans
+from orchestrator import antibot, plans
 from orchestrator.access import AccessRequestStore
 from orchestrator.auth import (
     AuthError,
@@ -53,18 +56,35 @@ from orchestrator.billing import (
     BillingPayment,
     BillingStore,
 )
+from orchestrator.chat import (
+    ChatRequest,
+    ChatResponse,
+    ChatUnavailable,
+    answer_question,
+)
 from orchestrator.community import router as community_router
 from orchestrator.dev_api import router as dev_api_router
+from orchestrator.login_rate_limiter import LoginRateLimiter
 from orchestrator.oauth import build_authorization_url, exchange_code_for_identity
 from orchestrator.pipeline import AnalysisPipeline, CycleResult, run_analysis_cycle
 from orchestrator.raggrap import build_raggrap_engine, raggrap_router
-from orchestrator.store import SignalRecord
+from orchestrator.recaptcha import verify_recaptcha
+from orchestrator.store import SignalRecord, SignalStore
 from orchestrator.turnstile import verify_turnstile
+from orchestrator.zenmux import (
+    ZenmuxRequest,
+    ZenmuxResponse,
+    ZenmuxUnavailable,
+    answer_zenmux,
+    display_models,
+)
 from shared.circuit_breaker import CircuitOpenError
 from shared.config import Settings, get_settings
 from shared.email import EmailError, EmailSender, render_access_token_email
 from shared.khpay import KhpayClient, KhpayError, build_khpay_client
+from shared.llm import LLMError
 from shared.logging import configure_logging, get_logger
+from shared.messaging import RedisMessageBus
 from shared.schemas.enums import Impact, Timeframe
 from shared.schemas.market import (
     CalendarEvent,
@@ -81,6 +101,8 @@ from shared.schemas.signals import (
     TechnicalSignal,
     TradeDecision,
 )
+from signals.api import build_signals_router
+from signals.store import EngineSignalStore
 
 _logger = get_logger(__name__)
 
@@ -103,6 +125,8 @@ def _build_stores() -> tuple[UserStore, AccessRequestStore, BillingStore]:
 
 _users, _access_requests, _billing = _build_stores()
 _bearer = HTTPBearer(auto_error=False)
+_login_limiter = LoginRateLimiter()
+_templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 
 def _email_sender() -> EmailSender:
@@ -117,7 +141,7 @@ _PUBLIC_API_PREFIXES = (
 # Only the health probe is reachable without auth. Interactive API docs and the
 # OpenAPI schema are disabled unless EXPOSE_API_DOCS is explicitly enabled, so
 # the endpoint surface is not published to the browser in production.
-_PUBLIC_PATHS = frozenset({"/health"})
+_PUBLIC_PATHS = frozenset({"/health", "/auth/login", "/auth/register"})
 
 
 def _client_ip(request: Request) -> str | None:
@@ -151,6 +175,12 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     environment: str
     symbols: list[str]
+    # Redis reachability, for external monitoring. Deliberately does not affect
+    # ``status``: the API serves correctly on the in-memory bus, so failing the
+    # probe would take the site down over a degraded dependency.
+    redis: str = "unavailable"
+    # Set when the bus fell back to in-memory, naming the reason.
+    degraded: str | None = None
 
 
 class RegisterRequest(BaseModel):
@@ -159,7 +189,12 @@ class RegisterRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     email: str = Field(min_length=3, max_length=254)
     password: str = Field(min_length=8, max_length=128)
-    turnstile_token: str = Field(default="", max_length=4096)
+    #: Google reCAPTCHA v2 response token. Verified server-side when a secret is set.
+    recaptcha_token: str = Field(default="", max_length=4096)
+    #: Epoch seconds from when the form was first rendered, for the timing check.
+    form_started_at: float = 0.0
+    #: Honeypot. Hidden from people, filled in by form-filling bots.
+    website: str = Field(default="", max_length=200)
 
     @field_validator("email")
     @classmethod
@@ -176,6 +211,12 @@ class LoginRequest(BaseModel):
 
     email: str
     password: str
+    #: Google reCAPTCHA v2 response token. Verified server-side when a secret is set.
+    recaptcha_token: str = Field(default="", max_length=4096)
+    #: Epoch seconds from when the form was first rendered, for the timing check.
+    form_started_at: float = 0.0
+    #: Honeypot. Hidden from people, filled in by form-filling bots.
+    website: str = Field(default="", max_length=200)
 
 
 class UserResponse(BaseModel):
@@ -341,6 +382,12 @@ app.add_middleware(
 
 app.include_router(dev_api_router)
 app.include_router(community_router)
+# Bar-anchored engine signals. Read-only, mounted under /api/v1 so the existing
+# auth middleware covers it. The adapter wraps this process's own SignalStore;
+# engine signals published by the Celery worker live in *that* process's memory,
+# so until the store is shared or persisted these endpoints report only what the
+# api process itself recorded. See the integration checklist.
+app.include_router(build_signals_router(EngineSignalStore(SignalStore())))
 if _app_settings.raggrap_enabled:
     app.include_router(raggrap_router)
 
@@ -381,11 +428,13 @@ async def enforce_auth(
 )
 async def register(request: Request, body: RegisterRequest) -> AuthResponse:
     """Create an account and return a signed token."""
-    if not await verify_turnstile(body.turnstile_token, remote_ip=_client_ip(request)):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Security check failed. Please try again.",
-        )
+    await _guard_credential_request(
+        request,
+        recaptcha_token=body.recaptcha_token,
+        form_started_at=body.form_started_at,
+        website=body.website,
+        scope="register",
+    )
     try:
         user = _users.register(body.name, body.email, body.password)
     except AuthError as exc:
@@ -396,13 +445,47 @@ async def register(request: Request, body: RegisterRequest) -> AuthResponse:
 
 
 @app.post("/api/v1/auth/login", response_model=AuthResponse, tags=["auth"], include_in_schema=False)
-async def login(body: LoginRequest) -> AuthResponse:
+async def login(request: Request, body: LoginRequest) -> AuthResponse:
     """Authenticate with email and password."""
+    await _guard_credential_request(
+        request,
+        recaptcha_token=body.recaptcha_token,
+        form_started_at=body.form_started_at,
+        website=body.website,
+        scope="login",
+    )
+    client_ip = _client_ip(request)
+
+    # Check if IP is blocked due to too many failed attempts
+    if client_ip and _login_limiter.is_blocked(client_ip):
+        block_time = _login_limiter.get_block_time_remaining(client_ip)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed login attempts. Please try again in {block_time // 60} minutes."
+        )
+
     user = _users.authenticate(body.email, body.password)
     if user is None:
+        # Record failed attempt
+        if client_ip:
+            _login_limiter.record_failed_attempt(client_ip)
+            remaining = _login_limiter.get_remaining_attempts(client_ip)
+            if remaining > 0:
+                detail = f"Invalid email or password. {remaining} attempts remaining."
+            else:
+                detail = "Too many failed login attempts. Your IP has been blocked for 1 hour."
+        else:
+            detail = "Invalid email or password"
+
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=detail
         )
+
+    # Clear failed attempts on successful login
+    if client_ip:
+        _login_limiter.record_successful_login(client_ip)
+
     settings = get_settings()
     token = create_token(user, settings.auth_secret, ttl_seconds=settings.auth_token_ttl_seconds)
     return AuthResponse(token=token, user=UserResponse.from_user(user))
@@ -506,6 +589,139 @@ async def google_callback(code: str, state: str) -> RedirectResponse:
     next_path = _safe_redirect_path(str(state_payload.get("next") or ""))
     target = f"{settings.frontend_url}{next_path}" if next_path else f"{settings.frontend_url}/dashboard"
     redirect = RedirectResponse(target, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    redirect.set_cookie(
+        key="pkay_token",
+        value=token,
+        max_age=settings.auth_token_ttl_seconds,
+        path="/",
+        secure=True,
+        httponly=False,
+        samesite="lax",
+    )
+    return redirect
+
+
+# HTML Form-based Authentication Endpoints
+
+@app.get("/auth/login", response_class=HTMLResponse, tags=["auth"], include_in_schema=False)
+async def login_form(request: Request) -> HTMLResponse:
+    """Display the login form."""
+    return _templates.TemplateResponse("login.html", {"request": request})
+
+
+@app.post(
+    "/auth/login",
+    response_class=HTMLResponse,
+    # Returning either an HTML page or a redirect is not a Pydantic model;
+    # without this FastAPI tries to build a response model from the union and
+    # raises at import time.
+    response_model=None,
+    tags=["auth"],
+    include_in_schema=False,
+)
+async def login_form_submit(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+) -> HTMLResponse | RedirectResponse:
+    """Handle form-based login submission."""
+    client_ip = _client_ip(request)
+
+    # Check if IP is blocked
+    if client_ip and _login_limiter.is_blocked(client_ip):
+        block_time = _login_limiter.get_block_time_remaining(client_ip)
+        return _templates.TemplateResponse(
+            "login.html",
+            {
+                "request": request,
+                "error": f"Too many failed login attempts. Please try again in {block_time // 60} minutes.",
+                "email": email,
+            },
+        )
+
+    # Attempt authentication
+    user = _users.authenticate(email, password)
+    if user is None:
+        # Record failed attempt
+        if client_ip:
+            _login_limiter.record_failed_attempt(client_ip)
+            remaining = _login_limiter.get_remaining_attempts(client_ip)
+            if remaining > 0:
+                error = f"Invalid email or password. {remaining} attempts remaining."
+            else:
+                error = "Too many failed login attempts. Your IP has been blocked for 1 hour."
+        else:
+            error = "Invalid email or password"
+
+        return _templates.TemplateResponse(
+            "login.html",
+            {
+                "request": request,
+                "error": error,
+                "email": email,
+            },
+        )
+
+    # Clear failed attempts on successful login
+    if client_ip:
+        _login_limiter.record_successful_login(client_ip)
+
+    # Create token and set cookie
+    settings = get_settings()
+    token = create_token(user, settings.auth_secret, ttl_seconds=settings.auth_token_ttl_seconds)
+
+    redirect = RedirectResponse(f"{settings.frontend_url}/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+    redirect.set_cookie(
+        key="pkay_token",
+        value=token,
+        max_age=settings.auth_token_ttl_seconds,
+        path="/",
+        secure=True,
+        httponly=False,
+        samesite="lax",
+    )
+    return redirect
+
+
+@app.get("/auth/register", response_class=HTMLResponse, tags=["auth"], include_in_schema=False)
+async def register_form(request: Request) -> HTMLResponse:
+    """Display the registration form."""
+    return _templates.TemplateResponse("register.html", {"request": request})
+
+
+@app.post(
+    "/auth/register",
+    response_class=HTMLResponse,
+    # Same as /auth/login: a page-or-redirect union is not a response model.
+    response_model=None,
+    tags=["auth"],
+    include_in_schema=False,
+)
+async def register_form_submit(
+    request: Request,
+    name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+) -> HTMLResponse | RedirectResponse:
+    """Handle form-based registration submission."""
+    try:
+        user = _users.register(name, email, password)
+    except AuthError as exc:
+        return _templates.TemplateResponse(
+            "register.html",
+            {
+                "request": request,
+                "error": str(exc),
+                "name": name,
+                "email": email,
+            },
+        )
+
+    # Create token and set cookie
+    settings = get_settings()
+    token = create_token(user, settings.auth_secret, ttl_seconds=settings.auth_token_ttl_seconds)
+
+    redirect = RedirectResponse(f"{settings.frontend_url}/dashboard", status_code=status.HTTP_303_SEE_OTHER)
     redirect.set_cookie(
         key="pkay_token",
         value=token,
@@ -626,7 +842,7 @@ async def admin_users(_: AdminDep) -> list[AdminUserResponse]:
 async def admin_stats(_: AdminDep) -> AdminStatsResponse:
     """Return summary numbers for the admin overview (admin only)."""
     users = _users.all()
-    users_by_plan: dict[str, int] = {"free": 0, "pro": 0, "ultra": 0}
+    users_by_plan: dict[str, int] = {"free": 0, "starter": 0, "pro": 0, "ultra": 0}
     for user in users:
         users_by_plan[user.plan] = users_by_plan.get(user.plan, 0) + 1
     requests = _access_requests.list()
@@ -796,7 +1012,7 @@ async def admin_reject_request(request_id: str, _: AdminDep) -> AccessRequestRes
 class CheckoutRequest(BaseModel):
     """Plan the user wants to purchase."""
 
-    plan: Literal["pro", "ultra"]
+    plan: Literal["starter", "pro", "ultra"]
 
 
 class CheckoutResponse(BaseModel):
@@ -832,15 +1048,77 @@ class PlanInfoResponse(BaseModel):
     limit: int
     used: int
     remaining: int
+    daily_limit: int
+    used_today: int
+    remaining_today: int
     active: bool
     expires_at: datetime | None
     price_usd: float | None
     limits: dict[str, int]
+    daily_limits: dict[str, int]
     prices: dict[str, float]
 
 
 def _khpay_client(settings: Settings) -> KhpayClient | None:
     return build_khpay_client(settings.khpay_base_url, settings.khpay_api_key)
+
+
+async def _guard_credential_request(
+    request: Request,
+    *,
+    recaptcha_token: str,
+    form_started_at: float,
+    website: str,
+    scope: str,
+) -> None:
+    """Apply the anti-bot checks shared by login and register.
+
+    Order matters and is the cheap-first ordering: the honeypot and request shape
+    cost nothing, then the timing check, then the one network call to Google. A
+    scripted request is refused before we spend an outbound call on it.
+
+    Rate limiting is *not* done here for sign-in; see
+    :func:`orchestrator.antibot.check_register_rate` for why the two differ.
+    """
+    if antibot.honeypot_tripped(website):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Registration rejected"
+        )
+
+    shape_ok, shape_reason = antibot.request_shape_verdict(
+        user_agent=request.headers.get("user-agent"),
+        accept_language=request.headers.get("accept-language"),
+    )
+    if not shape_ok:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=shape_reason or "Rejected"
+        )
+
+    timing_ok, timing_reason = antibot.timing_verdict(form_started_at, get_settings())
+    if not timing_ok:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=timing_reason or "Rejected"
+        )
+
+    if scope == "register":
+        client_ip = _client_ip(request)
+        if client_ip:
+            allowed, retry_after = await antibot.check_register_rate(client_ip)
+            if not allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=(
+                        "Too many accounts created from this network. "
+                        f"Please try again in {int(retry_after // 60) + 1} minutes."
+                    ),
+                    headers={"Retry-After": str(int(retry_after) + 1)},
+                )
+
+    if not await verify_recaptcha(recaptcha_token, remote_ip=_client_ip(request)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Security check failed. Please complete the verification.",
+        )
 
 
 async def _activate_from_payment(
@@ -952,22 +1230,22 @@ async def billing_plan(user: UserDep) -> PlanInfoResponse:
 
 @app.post(
     "/api/v1/billing/trial",
-    response_model=PlanInfoResponse,
+    status_code=status.HTTP_410_GONE,
     tags=["billing"],
     include_in_schema=False,
 )
-async def billing_trial(user: UserDep) -> PlanInfoResponse:
-    """Grant a free Pro trial (two months) via the "Pro plan" / "gifts" flow."""
-    settings = get_settings()
-    updated, granted = plans.activate_trial(user, settings)
-    if granted:
-        _users.update(updated)
-        _logger.info(
-            "billing.trial_activated",
-            user_id=user.id,
-            days=settings.plan_trial_days,
-        )
-    return _plan_info_response(updated, settings)
+async def billing_trial() -> None:
+    """Retired: the free two-month Pro trial has been discontinued.
+
+    Answers 410 Gone rather than 404 because this endpoint existed and callers may
+    still be retrying it; a 404 would read as "wrong URL" and leave them hunting for
+    an offer that no longer exists. The route is kept so those callers get a clear
+    terminal answer instead of a generic failure.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="The free Pro trial has ended. Choose a plan to continue.",
+    )
 
 
 def _plan_info_response(user: User, settings: Settings) -> PlanInfoResponse:
@@ -980,15 +1258,26 @@ def _plan_info_response(user: User, settings: Settings) -> PlanInfoResponse:
         limit=info.limit,
         used=info.used,
         remaining=info.remaining,
+        daily_limit=info.daily_limit,
+        used_today=info.used_today,
+        remaining_today=info.remaining_today,
         active=info.active,
         expires_at=info.expires_at,
         price_usd=info.price_usd,
         limits={
             "free": settings.plan_free_monthly_limit,
+            "starter": settings.plan_starter_monthly_limit,
             "pro": settings.plan_pro_monthly_limit,
             "ultra": settings.plan_ultra_monthly_limit,
         },
+        daily_limits={
+            "free": settings.plan_free_daily_limit,
+            "starter": settings.plan_starter_daily_limit,
+            "pro": settings.plan_pro_daily_limit,
+            "ultra": settings.plan_ultra_daily_limit,
+        },
         prices={
+            "starter": settings.plan_starter_price_usd,
             "pro": settings.plan_pro_price_usd,
             "ultra": settings.plan_ultra_price_usd,
         },
@@ -1071,9 +1360,26 @@ SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])
-async def health(settings: SettingsDep) -> HealthResponse:
-    """Liveness/readiness probe."""
-    return HealthResponse(environment=settings.environment, symbols=settings.trading_symbols)
+async def health(request: Request, settings: SettingsDep) -> HealthResponse:
+    """Liveness/readiness probe.
+
+    Reports the message-bus mode without probing Redis on the request path.
+    A ``RedisMessageBus`` is only ever constructed after a successful ping in
+    :func:`~shared.messaging.create_message_bus`, so its presence at startup is
+    the signal; issuing a live ping here would put a network call on the
+    liveness path that Docker and Caddy poll every 30 seconds, trading one
+    outage mode for another. The trade-off is that a Redis that dies *after*
+    startup leaves this field reading ``ok`` until the API restarts.
+    """
+    pipeline = getattr(request.app.state, "pipeline", None)
+    bus = getattr(pipeline, "bus", None)
+    redis_ok = isinstance(bus, RedisMessageBus)
+    return HealthResponse(
+        environment=settings.environment,
+        symbols=settings.trading_symbols,
+        redis="ok" if redis_ok else "unavailable",
+        degraded=None if redis_ok else "in_memory_bus",
+    )
 
 
 @app.get("/api/v1/tick/{symbol}", response_model=Tick, tags=["market"])
@@ -1228,6 +1534,108 @@ async def get_news(
 ) -> list[NewsArticle]:
     """Return aggregated market news."""
     return await pipeline.client.get_news(symbol=symbol, max_results=limit)
+
+
+@app.post("/api/v1/chat", response_model=ChatResponse, tags=["ai"])
+async def chat(
+    body: ChatRequest,
+    pipeline: PipelineDep,
+    settings: SettingsDep,
+) -> ChatResponse:
+    """Answer a market question using the live quote, candles and news.
+
+    The assistant is grounded in data fetched here at request time; the client
+    only sends the question. A missing chat model is reported as 503 rather
+    than answered from anywhere else, so the UI can say the assistant is
+    unconfigured instead of showing an unsourced reply.
+    """
+    try:
+        return await answer_question(settings, pipeline.client, body)
+    except ChatUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except LLMError as exc:
+        _logger.warning("chat.llm_failed", symbol=body.symbol, error=repr(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The AI assistant is temporarily unavailable. Please try again.",
+        ) from exc
+
+
+@app.post("/api/v1/zenmux", response_model=ZenmuxResponse, tags=["zenmux"])
+async def zenmux(
+    body: ZenmuxRequest,
+    pipeline: PipelineDep,
+    settings: SettingsDep,
+    user: UserDep,
+) -> ZenmuxResponse:
+    """Produce one XAU/USD analysis card.
+
+    Sibling of ``/api/v1/chat``, deliberately separate: that endpoint grounds a
+    language model in market data, this one scores a tabular classifier and
+    describes the bars it was scored against. They share no session state.
+
+    The upstream service holds no text-generation capability, so the turn is not
+    answered — it selects a model, and the card reports direction, confidence,
+    structure, reasons and levels. Direction and confidence come from the
+    classifier; the rest is computed from the same candles by the indicator pass.
+    Each field on the card is tagged with its source.
+
+    Metered against the caller's plan, exactly like ``/api/v1/analyze``: one card
+    costs one analysis against both the daily and the per-period quota, so the
+    figures published on the pricing page mean the same thing whichever feature
+    spends them. This is why the endpoint takes a ``UserDep`` — charging a quota
+    needs an account to charge. Exhausting either cap is 402, matching
+    ``/api/v1/analyze``.
+
+    Reports an unreachable or unconfigured service as 503 rather than
+    substituting a number: a fabricated probability would be indistinguishable
+    from a real one. Quota is checked before the upstream call and spent only
+    after it succeeds, so a failed request is neither billed nor preceded by a
+    paid call on the caller's behalf.
+    """
+    # Refuse an over-quota caller before the upstream call, not after: the upstream
+    # call is paid for, and charging it to a caller who was never entitled to it
+    # would spend real money on a 402. `check` spends nothing; the matching
+    # `consume` below runs only once a result is actually in hand.
+    allowed = plans.check(user, settings)
+    _users.update(allowed.user)
+    if not allowed.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"{allowed.reason}. Upgrade your plan to continue.",
+        )
+
+    try:
+        result = await answer_zenmux(settings, pipeline.client, body)
+    except ZenmuxUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except httpx.HTTPError as exc:
+        _logger.warning("zenmux.http_failed", error=repr(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Zenmux is temporarily unavailable. Please try again.",
+        ) from exc
+
+    consumption = plans.consume(allowed.user, settings)
+    _users.update(consumption.user)
+    return result
+
+
+@app.get("/api/v1/zenmux/models", response_model=dict[str, Any], tags=["zenmux"])
+async def zenmux_models() -> dict[str, Any]:
+    """The two selectable analysis models.
+
+    Served from the static registry rather than the upstream catalogue, so the
+    selector can never surface a backend name or a tree count.
+    """
+    models = display_models()
+    return {"data": models, "count": len(models)}
 
 
 @app.get("/api/v1/calendar", response_model=list[CalendarEvent], tags=["news"])
