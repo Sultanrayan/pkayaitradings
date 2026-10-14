@@ -34,8 +34,19 @@ services:
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1500}
+      # Conversational assistant (/ai page) — fast model, separate billing.
+      CHAT_LLM_MODEL: ${CHAT_LLM_MODEL:-deepseek-v4.1-flash}
+      CHAT_LLM_BASE_URL: ${CHAT_LLM_BASE_URL:-https://api.relaymodels.com/v1}
+      CHAT_LLM_API_KEY: ${CHAT_LLM_API_KEY:-}
+      # Analysis reasoning + second-opinion models.
+      ANALYSIS_LLM_MODELS: ${ANALYSIS_LLM_MODELS:-["claude-opus-4-8","claude-opus-5-5"]}
+      ANALYSIS_LLM_BASE_URL: ${ANALYSIS_LLM_BASE_URL:-https://ru.cheapvibecode.ru/v1}
+      ANALYSIS_LLM_API_KEY: ${ANALYSIS_LLM_API_KEY:-}
       # Durable data: users + access requests survive restarts and redeploys.
       DATA_DIR: /data
+      # Message bus + Celery broker. Service DNS, not localhost: the api
+      # container has its own loopback, so redis://localhost would refuse.
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       # Brevo transactional email (developer access tokens).
       BREVO_API_KEY: ${BREVO_API_KEY:-}
       BREVO_API_URL: ${BREVO_API_URL:-https://api.brevo.com/v3/smtp/email}
@@ -50,14 +61,126 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       # Cloudflare Turnstile bot check (empty disables verification).
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      # Google reCAPTCHA v2 on login/register (empty disables verification).
+      RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}
+      # Zenmux scoring backend behind router.pkay.fun. Without this key the
+      # /api/v1/zenmux routes answer 503 "Zenmux is not configured", because this
+      # block is the only channel into the container — there is no env_file, so a
+      # key set only in .env.production would never reach the API.
+      ZENMUX_API_KEY: ${ZENMUX_API_KEY:-}
+      ZENMUX_BASE_URL: ${ZENMUX_BASE_URL:-https://router.pkay.fun/v1/agenza}
       # Khpay KHQR payments for plan upgrades (empty disables checkout).
       KHPAY_API_KEY: ${KHPAY_API_KEY:-}
       KHPAY_BASE_URL: ${KHPAY_BASE_URL:-https://khpay.site/api/v1}
-      ADMIN_EMAILS: ${ADMIN_EMAILS:-menmengleapx1@gmail.com}
+      # Falls back to empty on purpose, so shared/config.py is the single source of
+      # truth for who is an admin. A literal default here silently overrides it:
+      # clearing ADMIN_EMAILS from .env.production would then re-grant admin to
+      # whoever is named below rather than to the account in the config default.
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
     volumes:
       - pkay_data:/data
     expose:
       - "8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # --- Celery worker + beat ---
+  #
+  # Deliberately minimal environments. The worker runs the analysis agents and
+  # beat only enqueues schedules, so they need the Redis URL, the LLM
+  # credentials the agents bill against, and logging. They serve no HTTP, so
+  # AUTH_SECRET, GOOGLE_*, KHPAY_* and Turnstile are all absent by design.
+  #
+  # Concurrency is 2 to match this host's 2 vCPUs. The dev compose uses 4, which
+  # would oversubscribe this box: each task blocks on LLM HTTP calls inside a
+  # single asyncio.run, so extra prefetch workers buy concurrency on a host with
+  # no spare cores and turn into timeouts that mask the real cost signal.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pkay-tdai-api:latest
+    environment:
+      ENVIRONMENT: production
+      LOG_JSON: "true"
+      BROKER: paper
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      LLM_PROVIDER: ${LLM_PROVIDER:-none}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1500}
+      CHAT_LLM_MODEL: ${CHAT_LLM_MODEL:-deepseek-v4.1-flash}
+      CHAT_LLM_BASE_URL: ${CHAT_LLM_BASE_URL:-https://api.relaymodels.com/v1}
+      CHAT_LLM_API_KEY: ${CHAT_LLM_API_KEY:-}
+      ANALYSIS_LLM_MODELS: ${ANALYSIS_LLM_MODELS:-["claude-opus-4-8","claude-opus-5-5"]}
+      ANALYSIS_LLM_BASE_URL: ${ANALYSIS_LLM_BASE_URL:-https://ru.cheapvibecode.ru/v1}
+      ANALYSIS_LLM_API_KEY: ${ANALYSIS_LLM_API_KEY:-}
+    command:
+      ["celery", "-A", "orchestrator.scheduler", "worker", "-l", "info", "--concurrency=2"]
+    # The image's HEALTHCHECK curls :8000/health, which only the api serves.
+    # A Celery worker runs no HTTP server, so the inherited probe can never pass
+    # and the container would sit at "unhealthy" forever. Replaced with a
+    # broker check, which is the thing that actually matters for a worker.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          celery -A orchestrator.scheduler inspect ping -d "celery@$$HOSTNAME"
+          | grep -q pong
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pkay-tdai-api:latest
+    environment:
+      ENVIRONMENT: production
+      LOG_JSON: "true"
+      BROKER: paper
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      LLM_PROVIDER: ${LLM_PROVIDER:-none}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1500}
+      CHAT_LLM_MODEL: ${CHAT_LLM_MODEL:-deepseek-v4.1-flash}
+      CHAT_LLM_BASE_URL: ${CHAT_LLM_BASE_URL:-https://api.relaymodels.com/v1}
+      CHAT_LLM_API_KEY: ${CHAT_LLM_API_KEY:-}
+      ANALYSIS_LLM_MODELS: ${ANALYSIS_LLM_MODELS:-["claude-opus-4-8","claude-opus-5-5"]}
+      ANALYSIS_LLM_BASE_URL: ${ANALYSIS_LLM_BASE_URL:-https://ru.cheapvibecode.ru/v1}
+      ANALYSIS_LLM_API_KEY: ${ANALYSIS_LLM_API_KEY:-}
+    command: ["celery", "-A", "orchestrator.scheduler", "beat", "-l", "info"]
+    # See the worker above: the inherited HTTP probe does not apply to beat.
+    # Beat runs no consumer, so `celery inspect ping` finds no nodes and always
+    # reports "No nodes replied" — beat cannot be probed that way. Its liveness
+    # is "can this process still reach the broker", which is exactly what beat
+    # needs: with no broker it cannot publish and the schedule is inert.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import redis,sys;
+          sys.exit(0 if redis.from_url('$${REDIS_URL}').ping() else 1)"
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -67,6 +190,10 @@ services:
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?NEXT_PUBLIC_API_BASE_URL must be set}
         NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+        # Must be set together with RECAPTCHA_SECRET_KEY. Setting the secret alone
+        # would reject every login and registration, because the browser has no
+        # widget to obtain a token from.
+        NEXT_PUBLIC_RECAPTCHA_SITE_KEY: ${NEXT_PUBLIC_RECAPTCHA_SITE_KEY:-}
     image: pkay-tdai-frontend:latest
     environment:
       PORT: "3000"
@@ -91,9 +218,79 @@ services:
       - frontend
     restart: unless-stopped
 
+  # --- Telegram signal bot ---
+  #
+  # Long-poll process, not an HTTP service: it answers Telegram's getUpdates and
+  # runs its own scan scheduler. It publishes no port and is unreachable except by
+  # Telegram itself.
+  #
+  # Its environment is deliberately tiny. biquote's public OHLC endpoint sends no
+  # auth header, so the bot needs no market credential, and it runs no LLM, so it
+  # needs no model key either. The single secret here is the bot token, and it is
+  # the only thing in this file that can grant anyone access to anything.
+  #
+  # TELEGRAM_CHAT_ID is intentionally unset. The bot is open to any user: anyone
+  # who sends /start is registered in SQLite and receives the alerts. Setting a
+  # chat id here would narrow delivery back to one conversation.
+  telegram-bot:
+    image: pkay-tdai-api:latest
+    environment:
+      ENVIRONMENT: production
+      LOG_JSON: "true"
+      # Optional at the compose level on purpose. `${VAR:?}` would make the whole
+      # stack refuse to start — website included — whenever the bot's credential
+      # is missing. With `:-` a missing token takes down only this container,
+      # which exits 2 with a clear message and is restarted, while the site and
+      # the trading pipeline carry on unaffected.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      # Subscribers and signal history must survive a redeploy, or every restart
+      # would silently unsubscribe everyone and reset the performance record.
+      SIGNALS_BOT_DB: /data/signals_bot.db
+      BIQUOTE_BASE_URL: ${BIQUOTE_BASE_URL:-https://biquote.io}
+    command: ["python", "-m", "telegram_bot"]
+    volumes:
+      - bot_data:/data
+    # The image's HEALTHCHECK curls :8000/health, which only the api serves. The
+    # bot runs no HTTP server, so that probe can never pass and the container
+    # would sit at "unhealthy" forever. Replaced with a check on the thing that
+    # actually breaks in practice: the SQLite volume losing its permissions or
+    # becoming unreadable, which would take the bot down silently.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import sqlite3,os,sys;
+          p=os.environ['SIGNALS_BOT_DB'];
+          sys.exit(0 if sqlite3.connect(p).execute('PRAGMA user_version').fetchone() is not None else 1)"
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # Message bus for the agent pipeline and the Celery broker/backend.
+  # No published ports: reachable only on the compose network, never on the
+  # host. --appendonly persists Celery's schedule and queued tasks across
+  # restarts, so a Redis crash does not silently drop a pending analysis.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
 volumes:
   caddy_data:
   caddy_config:
   # Persisted user accounts and developer access requests (DATA_DIR=/data).
   # Back this up before rebuilding the server: deploy/backup-data.sh
   pkay_data:
+  redis_data:
+  # Telegram bot: subscribers, signal history and the performance record. Losing
+  # this unsubscribes every user and wipes the win-rate history the bot reports.
+  bot_data:

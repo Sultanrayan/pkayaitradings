@@ -53,9 +53,19 @@ models/*.pkl
 # Docker volumes
 docker/volumes/
 
+# Local dev state. The bot's SQLite database is regenerated on first run and holds
+# this machine's own signal history, not source.
+signals_bot.db
+*.db
+
 # Deployment build artifacts
 pkay-deploy.tar.gz
 
 # Empty root-level placeholder files
 python
 source
+
+# endpoint-guide.md documents a LIVE Zenmux/agenza API key and the operating
+# commands for that host. It is a local reference, not source, and committing it
+# would publish a working credential. The key belongs in the server env only.
+endpoint-guide.md
