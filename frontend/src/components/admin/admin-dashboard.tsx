@@ -18,6 +18,13 @@ import { cn } from "cn";
 
 import { Button } from "@/components/ui/button";
 import {
+  Widget,
+  WidgetGrid,
+  WidgetRow,
+  WidgetStatus,
+  type WidgetSpec,
+} from "@/components/ui/widget-grid";
+import {
   Table,
   TableBody,
   TableCell,
@@ -44,6 +51,10 @@ import type {
   AdminBilling,
   AdminStats,
   AdminUser,
+  AgentStatus,
+  Alert,
+  HealthResponse,
+  PerformanceStats,
 } from "@/lib/types";
 
 type Tab = "overview" | "users" | "requests" | "billing";
@@ -108,38 +119,257 @@ export function AdminDashboard() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Overview                                                            */
+/* Overview — draggable widget grid                                    */
 /* ------------------------------------------------------------------ */
+
 function AdminOverview() {
   const { data: stats, loading, error, reload } = useAsyncData<AdminStats>(
     "adminStats",
     () => api.adminStats(),
     EMPTY_STATS,
   );
+  const { data: health, reload: reloadHealth } = useAsyncData<HealthResponse>(
+    "adminHealth",
+    () => api.health(),
+    { status: "unknown", environment: "unknown", symbols: [] },
+  );
+  const { data: agents, reload: reloadAgents } = useAsyncData<AgentStatus[]>(
+    "adminAgents",
+    () => api.agents(),
+    [],
+  );
+  const { data: alerts, reload: reloadAlerts } = useAsyncData<Alert[]>(
+    "adminAlerts",
+    () => api.alerts(6),
+    [],
+  );
+  const { data: performance, reload: reloadPerf } = useAsyncData<PerformanceStats | null>(
+    "adminPerformance",
+    () => api.performance(),
+    null,
+  );
+
+  const refreshAll = () => {
+    reload();
+    reloadHealth();
+    reloadAgents();
+    reloadAlerts();
+    reloadPerf();
+  };
 
   const planBreakdown = useMemo(
     () => [
       { label: "Free", value: stats.users_by_plan.free ?? 0 },
+      { label: "Starter", value: stats.users_by_plan.starter ?? 0 },
       { label: "Pro", value: stats.users_by_plan.pro ?? 0 },
       { label: "Ultra", value: stats.users_by_plan.ultra ?? 0 },
     ],
     [stats],
   );
 
-  const cards: { label: string; value: number; icon: LucideIcon; hint: string }[] = [
-    { label: "Total users", value: stats.total_users, icon: Users, hint: "Registered accounts" },
-    { label: "Pro", value: planBreakdown[1].value, icon: CheckCircle2, hint: "Pro accounts" },
-    { label: "Ultra", value: planBreakdown[2].value, icon: CreditCard, hint: "Ultra accounts" },
-    { label: "Analyses", value: stats.total_analyses, icon: LayoutDashboard, hint: "All-time" },
-    { label: "Pending requests", value: stats.pending_requests, icon: Clock, hint: "Awaiting review" },
-    { label: "Paid payments", value: stats.paid_payments, icon: CheckCircle2, hint: "Confirmed" },
+  const conversion = stats.total_users > 0
+    ? ((planBreakdown[1].value + planBreakdown[2].value) / stats.total_users)
+    : 0;
+
+  const healthy = health.status === "ok" || health.status === "healthy";
+  const agentsDown = agents.filter((agent) => agent.status === "error").length;
+
+  const widgets: WidgetSpec[] = [
+    {
+      id: "system",
+      children: (
+        <Widget title="System status" meta={health.environment}>
+          <div className="text-2xl font-semibold leading-none">
+            {health.status.toUpperCase()}
+          </div>
+          <WidgetStatus tone={healthy ? "bull" : "bear"}>
+            {healthy
+              ? `Serving ${health.symbols.length} symbol${health.symbols.length === 1 ? "" : "s"}`
+              : "Backend unreachable"}
+          </WidgetStatus>
+        </Widget>
+      ),
+    },
+    {
+      id: "users",
+      children: (
+        <Widget title="Total users" meta="all time">
+          <div className="text-2xl font-semibold leading-none tabular">{stats.total_users}</div>
+          <WidgetStatus tone="flat">
+            {`${conversion > 0 ? (conversion * 100).toFixed(0) : 0}% on a paid plan`}
+          </WidgetStatus>
+        </Widget>
+      ),
+    },
+    {
+      id: "plans",
+      span: "xl:col-span-2",
+      children: (
+        <Widget title="Plan distribution" meta={`${stats.total_users} accounts`}>
+          <div className="space-y-1">
+            {planBreakdown.map((item) => (
+              <WidgetRow
+                key={item.label}
+                label={item.label}
+                value={item.value}
+                progress={
+                  stats.total_users > 0 ? item.value / stats.total_users : 0
+                }
+              />
+            ))}
+          </div>
+        </Widget>
+      ),
+    },
+    {
+      id: "agents",
+      children: (
+        <Widget title="Agents" meta="live">
+          <div className="text-2xl font-semibold leading-none tabular">
+            {agents.length - agentsDown}/{agents.length}
+          </div>
+          <WidgetStatus tone={agentsDown > 0 ? "bear" : "bull"}>
+            {agentsDown > 0 ? `${agentsDown} agent(s) erroring` : "All agents operational"}
+          </WidgetStatus>
+        </Widget>
+      ),
+    },
+    {
+      id: "agents-detail",
+      span: "xl:col-span-2",
+      children: (
+        <Widget title="Agent activity" meta="signal count">
+          {agents.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">No agent data.</p>
+          ) : (
+            <div className="space-y-1">
+              {agents.map((agent) => (
+                <WidgetRow
+                  key={agent.name}
+                  label={agent.name}
+                  value={agent.signal_count}
+                  progress={
+                    Math.max(...agents.map((a) => a.signal_count), 1) > 0
+                      ? agent.signal_count /
+                        Math.max(...agents.map((a) => a.signal_count), 1)
+                      : 0
+                  }
+                />
+              ))}
+            </div>
+          )}
+        </Widget>
+      ),
+    },
+    {
+      id: "analyses",
+      children: (
+        <Widget title="Analyses" meta="all time">
+          <div className="text-2xl font-semibold leading-none tabular">
+            {stats.total_analyses}
+          </div>
+          <WidgetStatus tone="flat">
+            {performance
+              ? `Avg confidence ${(performance.avg_confidence * 100).toFixed(0)}%`
+              : "Confidence unavailable"}
+          </WidgetStatus>
+        </Widget>
+      ),
+    },
+    {
+      id: "signals",
+      children: (
+        <Widget title="Signal mix" meta="all time">
+          {performance ? (
+            <div className="space-y-1">
+              <WidgetRow
+                label="Bullish"
+                value={performance.bullish}
+                progress={
+                  performance.total_signals > 0
+                    ? performance.bullish / performance.total_signals
+                    : 0
+                }
+              />
+              <WidgetRow
+                label="Bearish"
+                value={performance.bearish}
+                progress={
+                  performance.total_signals > 0
+                    ? performance.bearish / performance.total_signals
+                    : 0
+                }
+              />
+              <WidgetRow
+                label="Neutral"
+                value={performance.neutral}
+                progress={
+                  performance.total_signals > 0
+                    ? performance.neutral / performance.total_signals
+                    : 0
+                }
+              />
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">No performance data.</p>
+          )}
+        </Widget>
+      ),
+    },
+    {
+      id: "requests",
+      children: (
+        <Widget title="Access requests" meta="all time">
+          <div className="text-2xl font-semibold leading-none tabular">
+            {stats.total_requests}
+          </div>
+          <WidgetStatus tone={stats.pending_requests > 0 ? "bear" : "bull"}>
+            {stats.pending_requests > 0
+              ? `${stats.pending_requests} awaiting review`
+              : "Nothing awaiting review"}
+          </WidgetStatus>
+        </Widget>
+      ),
+    },
+    {
+      id: "billing",
+      children: (
+        <Widget title="Payments" meta="all time">
+          <div className="text-2xl font-semibold leading-none tabular">
+            {stats.paid_payments}/{stats.total_payments}
+          </div>
+          <WidgetStatus tone="flat">Confirmed payments</WidgetStatus>
+        </Widget>
+      ),
+    },
+    {
+      id: "alerts",
+      span: "xl:col-span-2",
+      children: (
+        <Widget title="Recent alerts" meta="latest">
+          {alerts.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">No alerts recorded.</p>
+          ) : (
+            <div className="space-y-1">
+              {alerts.map((alert) => (
+                <WidgetRow
+                  key={alert.id}
+                  label={`${alert.symbol} · ${alert.title}`}
+                  value={formatDateTime(alert.created_at)}
+                />
+              ))}
+            </div>
+          )}
+        </Widget>
+      ),
+    },
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">Service health at a glance.</p>
-        <Button variant="outline" size="sm" className="gap-1.5" onClick={reload} disabled={loading}>
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={refreshAll} disabled={loading}>
           <RefreshCw className={cn("size-4", loading && "animate-spin")} />
           Refresh
         </Button>
@@ -147,31 +377,7 @@ function AdminOverview() {
 
       {error ? <ErrorNote>{error}</ErrorNote> : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {cards.map((card) => (
-          <StatCard
-            key={card.label}
-            label={card.label}
-            value={card.value}
-            hint={card.hint}
-            icon={<card.icon className="size-4" />}
-          />
-        ))}
-      </div>
-
-      <div className="rounded-xl border border-border bg-card p-6">
-        <h2 className="text-sm font-medium tracking-wide">Plan distribution</h2>
-        <div className="mt-4 grid grid-cols-3 gap-4">
-          {planBreakdown.map((item) => (
-            <div key={item.label} className="rounded-lg border border-border bg-muted/30 p-4 text-center">
-              <div className="text-2xl font-semibold tabular">{item.value}</div>
-              <div className="mt-1 text-[11px] uppercase tracking-wider text-muted-foreground">
-                {item.label}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      <WidgetGrid widgets={widgets} hint="Drag and rearrange widgets to customize the layout." />
     </div>
   );
 }

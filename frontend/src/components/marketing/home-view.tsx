@@ -2,46 +2,19 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import {
-  ArrowRight,
-  Bot,
-  Database,
-  LogOut,
-  ShieldCheck,
-  Zap,
-} from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
+import { AboutSection } from "@/components/marketing/about-section";
 import { FooterSection } from "@/components/marketing/footer-section";
 import { FeaturesSection } from "@/components/marketing/features-section";
+import { HeroSection } from "@/components/marketing/hero-section";
+import { HowItWorksSection } from "@/components/marketing/how-it-works-section";
 import { IntegrationCard } from "@/components/marketing/integration-card";
-import { ResponsiveHeroBanner } from "@/components/marketing/responsive-hero-banner";
+import { LogoCloud } from "@/components/marketing/logo-cloud";
 import { PipelineStepper, type StepperStep } from "@/components/marketing/stepper";
 import { useAuth } from "@/components/auth-provider";
 import { Button } from "@/components/ui/button";
 import { AGENTS } from "@/lib/constants";
-
-const STEPS = [
-  {
-    icon: Database,
-    title: "1. Read the market",
-    body: "Live prices stream in from biquote. Candles, the economic calendar, and news headlines are collected into one feed.",
-  },
-  {
-    icon: Bot,
-    title: "2. Agents analyse",
-    body: "The Technical Analyst studies price and indicators. The News Monitor scores events and sentiment.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "3. Risk checks the trade",
-    body: "The Risk Manager sets the position size and stop loss. It can block a trade that breaks the limits.",
-  },
-  {
-    icon: Zap,
-    title: "4. Decide and execute",
-    body: "The Decision Maker combines the signals. If the score is high enough, the trade is placed.",
-  },
-];
 
 const PIPELINE_STEPS: StepperStep[] = [
   {
@@ -68,13 +41,13 @@ export function HomeView() {
 
   return (
     <div className="min-h-dvh">
-      <ResponsiveHeroBanner
+      <HeroSection
         brand={
           <Link href="/" className="flex items-center gap-3">
             <span className="relative size-8 shrink-0 overflow-hidden rounded-lg ring-1 ring-white/15">
               <Image src="/logo-pkay.jpg" alt="Pkay TDAI" fill sizes="32px" className="object-cover" />
             </span>
-            <span className="text-sm font-semibold tracking-tight">Pkay TDAI</span>
+            <span className="text-md font-bold tracking-tight">Pkay TDAI</span>
           </Link>
         }
         navLinks={[
@@ -83,31 +56,25 @@ export function HomeView() {
           { label: "Agents", href: "#agents" },
           { label: "Pricing", href: "/pricing" },
         ]}
-        navAction={
-          signedIn ? (
-            <div className="flex items-center gap-2">
-              <Button asChild size="sm" className="gap-1.5">
-                <Link href="/dashboard">
-                  Open console <ArrowRight className="size-3.5" />
-                </Link>
-              </Button>
-              <Button variant="ghost" size="sm" className="gap-1.5" onClick={logout}>
-                <LogOut className="size-3.5" />
-                <span className="hidden sm:inline">Sign out</span>
-              </Button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/login">Sign in</Link>
-              </Button>
-              <Button size="sm" asChild>
-                <Link href="/register">Get started</Link>
-              </Button>
-            </div>
-          )
+        auth={
+          signedIn
+            ? {
+                secondary: { label: "Sign out", onClick: logout },
+                primary: { label: "Open console", href: "/dashboard" },
+              }
+            : {
+                secondary: { label: "Sign in", href: "/login" },
+                primary: { label: "Get started", href: "/register" },
+              }
         }
-        title="Gold and Bitcoin analysis from four AI agents"
+        /* Two lines with a hard break, as in the original. */
+        title={
+          <>
+            Gold and Bitcoin Analysis
+            <br />
+            From Four AI Agents
+          </>
+        }
         subtitle="Pkay TDAI combines technical analysis, news sentiment, and strict risk limits. Each agent gives a signal, and the system only trades when they agree."
         primaryCta={
           signedIn
@@ -119,40 +86,27 @@ export function HomeView() {
             ? { label: "View charts", href: "/charts" }
             : { label: "See how it works", href: "#how-it-works" }
         }
+        /* The image area. The logo cloud sits in the hero's media panel, in place of
+            the price-chart image it used to hold. */
+        panel={
+          <LogoCloud
+            className="px-4 py-6"
+            headline="Data From"
+            actionLabel="View integrations"
+            actionHref="#capabilities"
+          />
+        }
       />
 
-      {/* How it works */}
-      <section id="how-it-works" className="mx-auto max-w-6xl px-6 py-24">
-        <div className="mx-auto max-w-2xl text-center">
-          <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
-            How it works
-          </p>
-          <h2 className="mt-3 font-serif text-3xl font-medium tracking-tight sm:text-4xl">
-            What happens in one analysis cycle
-          </h2>
-          <p className="mt-4 text-sm text-muted-foreground">
-            Each cycle runs the four agents in order and records why it made its decision.
-          </p>
-        </div>
+      {/* Who we are — 21st.dev `about-section` (@uilayout.contact). Its label row is
+          absolutely positioned with negative top offsets at the small breakpoints, so
+          it is designed to overlap the block above it. */}
+      <AboutSection />
 
-        <div className="mt-14 grid gap-5 md:grid-cols-2 lg:grid-cols-4">
-          {STEPS.map((step, index) => {
-            const Icon = step.icon;
-            return (
-              <div key={step.title} className="relative rounded-2xl border border-border bg-card p-6">
-                <span className="mb-5 flex size-10 items-center justify-center rounded-xl bg-accent">
-                  <Icon className="size-5" />
-                </span>
-                <h3 className="text-sm font-medium">{step.title}</h3>
-                <p className="mt-2 text-sm text-muted-foreground">{step.body}</p>
-                {index < STEPS.length - 1 ? (
-                  <ArrowRight className="absolute -right-3 top-1/2 hidden size-5 -translate-y-1/2 text-muted-foreground/40 lg:block" />
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </section>
+      {/* How it works - 21st.dev `Feature Section` (ayushmxxn, id 5541), adapted to
+          this project's tokens and real pipeline copy. It replaced a four-card grid
+          that was the only consumer of the old STEPS array. */}
+      <HowItWorksSection />
 
       {/* Features (below How it works) */}
       <FeaturesSection />

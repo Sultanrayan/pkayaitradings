@@ -5,12 +5,10 @@ import { useRouter } from "next/navigation";
 import {
   Bot,
   ChevronRight,
-  CreditCard,
   LogOut,
   Settings,
   Shield,
   UserRound,
-  Users,
 } from "lucide-react";
 
 import { useAuth } from "@/components/auth-provider";
@@ -27,9 +25,9 @@ import {
 import { useProfile } from "@/hooks/use-profile";
 import { profileInitials } from "@/lib/profile";
 
+// Subscriptions used to live here. It is now reached from Settings, where billing
+// sits alongside the rest of the account, rather than as a peer of Settings itself.
 const MENU = [
-  { href: "/subscriptions", label: "Subscriptions", icon: CreditCard },
-  { href: "/community", label: "Community", icon: Users },
   { href: "/settings", label: "Settings", icon: Settings },
   { href: "/ai", label: "AI", icon: Bot },
 ];

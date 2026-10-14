@@ -13,7 +13,8 @@ interface CheckoutView {
 }
 
 const PRO_FEATURES = [
-  "150 analyses per month",
+  "20 analyses per day",
+  "600 analyses per month",
   "All four agents, one decision",
   "Live XAUUSD + BTCUSD data",
   "Order-flow & HMM regime analysis",

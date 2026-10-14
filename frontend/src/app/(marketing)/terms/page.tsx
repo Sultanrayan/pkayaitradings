@@ -25,9 +25,12 @@ export default function TermsPage() {
           <section>
             <h2 className="font-medium text-foreground">2. Plans and billing</h2>
             <p className="mt-2">
-              The service offers Free (20 analyses per month), Pro (150 analyses per month, USD 15)
-              and Ultra (unlimited analyses, USD 65) plans. Paid plans are billed per 30-day period
-              via Khpay. If a payment is not made by the end of the billing period, the plan is
+              The service offers four plans, each with a daily cap and a cap per billing
+              period, and both caps are enforced independently: Free (2 analyses per day,
+              60 per month), Starter (8 per day, 240 per month, USD 6), Pro (20 per day, 600
+              per month, USD 13) and Ultra (250 per day, 7,500 per month, USD 250). Daily
+              counts reset at 00:00 UTC. Paid plans are billed per 30-day period via Khpay.
+              If a payment is not made by the end of the billing period, the plan is
               automatically deactivated and the account reverts to Free.
             </p>
           </section>

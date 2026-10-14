@@ -3,18 +3,17 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useId } from "react";
-import {
-  ArrowRight,
-  BrainCircuit,
-  CandlestickChart,
-  Database,
-  Newspaper,
-  ShieldCheck,
-  Sparkles,
-  type LucideIcon,
-} from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "cn";
+import {
+  BinanceIcon,
+  BybitIcon,
+  ChatGptIcon,
+  ClaudeIcon,
+  DeepSeekIcon,
+  OkxIcon,
+} from "@/components/marketing/brand-icons";
 
 /**
  * Integration network card.
@@ -26,20 +25,24 @@ import { cn } from "cn";
 
 type Node = {
   id: string;
-  icon: LucideIcon;
+  /** Brand mark shown in the chip. */
+  Mark: (props: { className?: string }) => React.ReactElement;
+  /** Tint applied to the chip so each exchange/provider reads distinctly. */
+  tint: string;
   x: number;
   y: number;
   path: string;
   delay: number;
 };
 
+/** The venues and model providers the analysis stack integrates with. */
 const NODES: Node[] = [
-  { id: "data", icon: Database, x: 110, y: 90, path: "M 270 205 V 105 Q 270 90 255 90 H 110", delay: 0.1 },
-  { id: "technical", icon: CandlestickChart, x: 360, y: 70, path: "M 294 205 V 85 Q 294 70 309 70 H 360", delay: 0.2 },
-  { id: "news", icon: Newspaper, x: 160, y: 205, path: "M 250 205 H 160", delay: 0.3 },
-  { id: "risk", icon: ShieldCheck, x: 480, y: 205, path: "M 314 205 H 480", delay: 0.4 },
-  { id: "decision", icon: BrainCircuit, x: 282, y: 360, path: "M 282 205 V 360", delay: 0.6 },
-  { id: "llm", icon: Sparkles, x: 460, y: 340, path: "M 314 215 V 325 Q 314 340 329 340 H 460", delay: 0.7 },
+  { id: "binance", Mark: BinanceIcon, tint: "#F0B90B", x: 110, y: 90, path: "M 270 205 V 105 Q 270 90 255 90 H 110", delay: 0.1 },
+  { id: "chatgpt", Mark: ChatGptIcon, tint: "#10A37F", x: 360, y: 70, path: "M 294 205 V 85 Q 294 70 309 70 H 360", delay: 0.2 },
+  { id: "claude", Mark: ClaudeIcon, tint: "#D97757", x: 160, y: 205, path: "M 250 205 H 160", delay: 0.3 },
+  { id: "deepseek", Mark: DeepSeekIcon, tint: "#4D6BFE", x: 480, y: 205, path: "M 314 205 H 480", delay: 0.4 },
+  { id: "okx", Mark: OkxIcon, tint: "#E8E8E8", x: 282, y: 360, path: "M 282 205 V 360", delay: 0.6 },
+  { id: "bybit", Mark: BybitIcon, tint: "#F7A600", x: 460, y: 340, path: "M 314 215 V 325 Q 314 340 329 340 H 460", delay: 0.7 },
 ];
 
 function ConnectorLine({ d, id }: { d: string; id: string }) {
@@ -103,9 +106,9 @@ export function IntegrationNetwork() {
         />
       </div>
 
-      {/* Floating tool chips */}
+      {/* Floating brand chips */}
       {NODES.map((node) => {
-        const Icon = node.icon;
+        const Mark = node.Mark;
         return (
           <motion.div
             key={node.id}
@@ -114,9 +117,10 @@ export function IntegrationNetwork() {
             viewport={{ once: true }}
             transition={{ delay: node.delay }}
             style={{ left: `${(node.x / 564) * 100}%`, top: `${(node.y / 410) * 100}%` }}
-            className="absolute z-10 flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg border border-border bg-background text-foreground shadow-sm sm:h-12 sm:w-12 sm:rounded-xl"
+            className="absolute z-10 flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg border border-border bg-background shadow-sm sm:h-12 sm:w-12 sm:rounded-xl"
+            title={node.id}
           >
-            <Icon className="size-4 text-foreground sm:size-6" strokeWidth={1.5} />
+            <Mark className="size-4 sm:size-6" />
           </motion.div>
         );
       })}
@@ -146,12 +150,12 @@ export function VisualContainer({ children, className }: { children: React.React
 }
 
 const INTEGRATIONS = [
-  { label: "Live market feed", detail: "Candles, quotes and calendar data." },
-  { label: "Technical Analyst", detail: "Indicators and trend detection." },
-  { label: "News Monitor", detail: "Headlines and event sentiment." },
-  { label: "Risk Manager", detail: "Sizing, stops and veto checks." },
-  { label: "Decision Maker", detail: "Final, risk-checked call." },
-  { label: "LLM review", detail: "Reasoned narrative over every signal." },
+  { label: "Binance", detail: "Live candles, quotes and calendar data." },
+  { label: "ChatGPT", detail: "Narrative reasoning over every signal." },
+  { label: "Claude", detail: "Second-opinion market review." },
+  { label: "DeepSeek", detail: "Fast conversational market analyst." },
+  { label: "OKX", detail: "Independent exchange price feed." },
+  { label: "Bybit", detail: "Derivatives and order-book context." },
 ];
 
 export function IntegrationCard() {

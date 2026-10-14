@@ -52,7 +52,8 @@ export default function CheckoutPage() {
     let active = true;
     void (async () => {
       const param = new URLSearchParams(window.location.search).get("plan");
-      const targetPlan: "pro" | "ultra" = param === "ultra" ? "ultra" : "pro";
+      const targetPlan: "starter" | "pro" | "ultra" =
+        param === "starter" || param === "ultra" ? param : "pro";
       try {
         const result = await api.billingCheckout(targetPlan);
         if (!active) return;

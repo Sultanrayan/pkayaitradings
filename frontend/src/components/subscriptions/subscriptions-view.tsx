@@ -2,11 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
-import { toast } from "sonner";
 
 import { PageHeader, ErrorNote, EmptyState } from "@/components/shared/primitives";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, type PlanInfo } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
@@ -36,15 +34,6 @@ export function SubscriptionsView() {
       active = false;
     };
   }, []);
-
-  const trial = async () => {
-    try {
-      setPlan(await api.billingTrial());
-      toast.success("2-month Pro trial activated");
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "Could not activate trial");
-    }
-  };
 
   const catalogue = plan?.prices ?? {};
   const limits = plan?.limits ?? {};
@@ -121,7 +110,9 @@ export function SubscriptionsView() {
       ) : null}
 
       {plan && ["free", "trial", ""].includes(plan.plan) ? (
-        <Button onClick={trial}>Activate 2-month Pro trial</Button>
+        <p className="text-xs text-muted-foreground">
+          The free Pro trial has ended. Choose a plan below to continue.
+        </p>
       ) : null}
 
       <div className="grid gap-4 md:grid-cols-3">

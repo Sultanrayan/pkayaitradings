@@ -12,10 +12,13 @@ import { ProfileMenu } from "@/components/navbar/profile-menu";
 import { Button } from "@/components/ui/button";
 
 const NAV_LINKS = [
-  { href: "/community", label: "Community" },
   { href: "/signals", label: "Signal" },
   { href: "/news", label: "News" },
   { href: "/market", label: "Market" },
+  // Separate route from /ai: Zenmux is the agenza XAU/USD classifier, which
+  // returns a probability rather than generated text. The two share a visual
+  // language and nothing else — no session state, no history, no API route.
+  { href: "/zenmux", label: "Zenmux" },
 ];
 
 export function Navbar() {

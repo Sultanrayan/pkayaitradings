@@ -44,9 +44,10 @@ const FOOTER_COLUMNS: FooterColumn[] = [
     title: "Resources",
     links: [
       { label: "How it works", href: "/how-it-works" },
-      { label: "API Reference", href: "/api-reference" },
-      { label: "Status", href: "/status" },
-      { label: "Change log", href: "/changelog" },
+      { label: "Learn more", href: "/docs/api-reference" },
+      { label: "API Reference", href: "/docs/api-reference" },
+      { label: "Status", href: "/docs/api-reference" },
+      { label: "Change log", href: "/docs/api-reference" },
     ],
   },
   {
