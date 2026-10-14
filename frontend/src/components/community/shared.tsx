@@ -2,6 +2,7 @@
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import type { SocialUser } from "@/hooks/use-social";
+import { SEED_EPOCH } from "@/hooks/use-social";
 
 export function UserAvatar({
   user,
@@ -34,9 +35,14 @@ export function UserAvatar({
   );
 }
 
-/** Compact relative time: "5m", "3h", "2d". */
-export function relativeTime(iso: string): string {
-  const delta = Date.now() - new Date(iso).getTime();
+/**
+ * Compact relative time: "5m", "3h", "2d".
+ *
+ * Defaults to `SEED_EPOCH` rather than `Date.now()` so the label matches the
+ * seeded timestamps on both the server and the client.
+ */
+export function relativeTime(iso: string, now: number = SEED_EPOCH): string {
+  const delta = now - new Date(iso).getTime();
   if (delta < 60_000) return "now";
   if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m`;
   if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h`;

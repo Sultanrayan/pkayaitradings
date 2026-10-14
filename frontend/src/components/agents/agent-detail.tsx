@@ -19,7 +19,7 @@ import {
 } from "@/components/shared/primitives";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+import { FlipToggle } from "@/components/ui/flip-button";
 import {
   Table,
   TableBody,
@@ -237,8 +237,13 @@ export function AgentDetail() {
               {status?.status ?? "idle"}
             </Badge>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Switch checked={enabled} onCheckedChange={setEnabled} />
-              {enabled ? "Enabled" : "Disabled"}
+              <FlipToggle
+                checked={enabled}
+                onCheckedChange={setEnabled}
+                onLabel="Enabled"
+                offLabel="Disabled"
+                ariaLabel="Toggle agent"
+              />
             </div>
           </div>
         }

@@ -9,14 +9,14 @@
 export interface Profile {
   name: string;
   email: string;
-  role: string;
+  username: string;
   avatarUrl?: string;
 }
 
 export const DEFAULT_PROFILE: Profile = {
-  name: "Pkay Trader",
-  email: "trader@pkay.ai",
-  role: "Analyst",
+  name: "Pkay User",
+  email: "user@example.com",
+  username: "@pkayuser",
 };
 
 const STORAGE_KEY = "pkay.profile";

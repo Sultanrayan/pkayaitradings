@@ -4,6 +4,10 @@
  * It is deliberately *not* `/admin`: the route is never linked from any page,
  * carries `noindex`, and the backend additionally rejects any account whose
  * email is not on the `ADMIN_EMAILS` allowlist. Only the secret slug is public.
+ *
+ * Access is enforced server-side by `get_current_admin` in
+ * `orchestrator/main.py`. Keep `noindex` on this route's layout so the console
+ * stays out of search results.
  */
 export const ADMIN_PATH = "/pkay-control-x7q9";
 

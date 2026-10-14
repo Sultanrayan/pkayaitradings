@@ -13,11 +13,14 @@ export interface MarketSnapshot {
 
 /**
  * Market snapshot for an attachment. Uses the live tick stream when available;
- * otherwise produces a deterministic demo tick (refreshed every 1.5s) so the
- * attachment always renders real-looking numbers.
+ * otherwise produces a deterministic demo tick (refreshed on the shared clock)
+ * so the attachment always renders real-looking numbers.
+ *
+ * `now` is `0` until hydration, which keeps the first client render identical
+ * to the server's.
  */
 export function useMarketSnapshot(symbol: string): MarketSnapshot {
-  const now = useNow(1_500);
+  const now = useNow();
   const { ticks } = useMarketContext();
 
   return useMemo<MarketSnapshot>(() => {

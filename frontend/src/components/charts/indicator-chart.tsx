@@ -29,7 +29,11 @@ export interface IndicatorChartProps {
 
 function toLineData(times: UTCTimestamp[], values: (number | null)[]): LineData[] {
   const out: LineData[] = [];
-  for (let i = 0; i < values.length; i += 1) {
+  // Guard the parallel arrays: a value array longer than the timestamps (or a
+  // missing timestamp) would otherwise push `undefined` into the series, which
+  // the chart library rejects.
+  const length = Math.min(times.length, values.length);
+  for (let i = 0; i < length; i += 1) {
     const value = values[i];
     if (value !== null && Number.isFinite(value)) out.push({ time: times[i], value });
   }
@@ -57,11 +61,13 @@ export function IndicatorChart({
     () => ({
       lines: lines.map((line) => ({ ...line, data: toLineData(times, line.values) })),
       histogram:
-        histogram?.map<HistogramData>((value, i) => ({
-          time: times[i],
-          value: value ?? 0,
-          color: (value ?? 0) >= 0 ? "rgba(34,197,94,0.5)" : "rgba(239,68,68,0.5)",
-        })) ?? [],
+        histogram
+          ?.slice(0, times.length)
+          .map<HistogramData>((value, i) => ({
+            time: times[i],
+            value: value ?? 0,
+            color: (value ?? 0) >= 0 ? "rgba(34,197,94,0.5)" : "rgba(239,68,68,0.5)",
+          })) ?? [],
     }),
     [lines, histogram, times],
   );

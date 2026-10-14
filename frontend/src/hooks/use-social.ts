@@ -123,8 +123,18 @@ const AVATARS = [
   "/logo-pkay.jpg",
 ];
 
+/**
+ * Fixed reference point for seeded community content.
+ *
+ * These timestamps were generated from `Date.now()` at module load, which
+ * differs between the server and the browser and therefore breaks hydration.
+ * A constant epoch keeps the seed data identical on both sides;
+ * `relativeTime` uses the same value so the labels stay consistent.
+ */
+export const SEED_EPOCH = Date.UTC(2026, 8, 1, 12, 0, 0);
+
 function daysAgo(days: number, hours = 0): string {
-  return new Date(Date.now() - days * 86_400_000 - hours * 3_600_000).toISOString();
+  return new Date(SEED_EPOCH - days * 86_400_000 - hours * 3_600_000).toISOString();
 }
 
 export const SEED_USERS: SocialUser[] = [

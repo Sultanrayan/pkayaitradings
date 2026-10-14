@@ -37,6 +37,16 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.29",
     "alembic>=1.13",
+    # Jinja2Templates is used to render the login/consent pages served by the
+    # gateway; Starlette raises at import time if the package is missing.
+    "jinja2>=3.1",
+    # Required by FastAPI for `Form(...)` fields on the auth endpoints.
+    "python-multipart>=0.0.9",
+    # Telegram signal bot: the client library and the scheduler that drives the
+    # per-timeframe scan jobs. Both are imported by `telegram_bot.app`, which is
+    # the module's documented entry point.
+    "python-telegram-bot>=21.0",
+    "apscheduler>=3.10",
 ]
 
 [project.optional-dependencies]
@@ -76,6 +86,8 @@ packages = [
     "agents.news_monitor.scrapers",
     "agents.risk_manager",
     "agents.decision_maker",
+    "signals",
+    "telegram_bot",
     "shared",
     "shared.schemas",
     "shared.database",
@@ -90,11 +102,13 @@ packages = [
     "Raggrap.src.core",
     "Raggrap.src.models",
 ]
+# The signal bot's tests ship as a package so their module names cannot collide
+# with the identically named files under `tests/` (e.g. test_indicators.py).
 
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra --strict-markers --strict-config"
-testpaths = ["tests"]
+testpaths = ["tests", "signals/tests", "telegram_bot/tests"]
 asyncio_mode = "auto"
 filterwarnings = ["error::DeprecationWarning"]
 markers = [
@@ -103,7 +117,7 @@ markers = [
 
 [tool.coverage.run]
 branch = true
-source = ["agents", "shared", "data_pipeline", "execution", "orchestrator"]
+source = ["agents", "shared", "signals", "telegram_bot", "data_pipeline", "execution", "orchestrator"]
 
 [tool.coverage.report]
 exclude_lines = [
@@ -139,7 +153,7 @@ ignore = [
 "orchestrator/community.py" = ["N815"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["agents", "shared", "data_pipeline", "execution", "orchestrator"]
+known-first-party = ["agents", "shared", "signals", "telegram_bot", "data_pipeline", "execution", "orchestrator"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -148,7 +162,7 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 disallow_untyped_defs = true
 plugins = ["pydantic.mypy"]
-files = ["agents", "shared", "data_pipeline", "execution", "orchestrator", "Raggrap"]
+files = ["agents", "shared", "signals", "telegram_bot", "data_pipeline", "execution", "orchestrator", "Raggrap"]
 exclude = ["venv", "\\.venv", "build", "dist", "Raggrap/research", "Raggrap/Img"]
 
 [[tool.mypy.overrides]]
@@ -159,4 +173,10 @@ ignore_missing_imports = true
 # providers at runtime, so these SDKs may be absent under strict CI.
 [[tool.mypy.overrides]]
 module = ["spacy", "chromadb", "neo4j", "redis", "Raggrap.*"]
+ignore_missing_imports = true
+
+# Telegram and APScheduler both ship partial stubs; the bot is typed against their
+# documented API rather than against what their markers currently declare.
+[[tool.mypy.overrides]]
+module = ["telegram.*", "apscheduler.*"]
 ignore_missing_imports = true

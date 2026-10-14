@@ -39,15 +39,85 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Which of the two user-facing analysis models to run.
+ *
+ * These are display names over two upstream backends, and the mapping is resolved
+ * server-side. The client never sees or sends a backend identifier — `xgboost` and
+ * `lightgbm` are not part of this screen's vocabulary.
+ */
+export type ZenmuxModelId = "super" | "flash";
+
+export interface ZenmuxModelOption {
+  id: ZenmuxModelId;
+  name: string;
+  description: string;
+}
+
+/** Which engine produced a field: the classifier, or the indicator pass. */
+export type ZenmuxReasonSource = "analysis" | "model";
+
+export interface ZenmuxReason {
+  detail: string;
+  source: ZenmuxReasonSource;
+}
+
+/**
+ * Timeframes the Zenmux analysis can be read on.
+ *
+ * M5 and M15 only: the market feed returns roughly three days of M5, which is enough
+ * to aggregate M15 but not H1. The classifier always scores M5 regardless — see
+ * :data:`ZenmuxAnalysis.model_timeframe`.
+ */
+export type ZenmuxTimeframe = "M5" | "M15";
+
+export interface ZenmuxAnalysis {
+  model_name: string;
+  model_description: string;
+  symbol: string;
+  symbol_label: string;
+  /** The timeframe the structure, reasons and levels describe. */
+  timeframe: ZenmuxTimeframe;
+  /** The timeframe the classifier actually scored, always M5. */
+  model_timeframe: string;
+
+  /** From the classifier. */
+  direction: "BULLISH" | "BEARISH" | "NEUTRAL";
+  confidence: number;
+  probability_up: number;
+  probability_down: number;
+
+  /** From the indicator pass over the same candles. */
+  structure: string;
+  structure_detail: string;
+  close: number;
+  support: number;
+  resistance: number;
+  atr: number | null;
+  rsi: number | null;
+
+  reasons: ZenmuxReason[];
+  summary: string;
+  updated_at: string;
+
+  /** True when there were too few closed bars to read structure. */
+  limited: boolean;
+}
+
 export interface PlanInfo {
   plan: string;
   limit: number;
   used: number;
   remaining: number;
+  /** Per-UTC-day cap; `-1` means unlimited. */
+  daily_limit: number;
+  used_today: number;
+  remaining_today: number;
   active: boolean;
   expires_at: string | null;
   price_usd: number | null;
   limits: Record<string, number>;
+  daily_limits: Record<string, number>;
   prices: Record<string, number>;
 }
 
@@ -114,6 +184,65 @@ export const api = {
     request<OhlcSeries>(
       `/api/v1/ohlc/${encodeURIComponent(symbol)}?interval=${interval}&limit=${limit}`,
     ),
+
+  /**
+   * Ask the market analyst. The server fetches the live quote, candles and news
+   * for `symbol`/`timeframe` and grounds the answer in them, so only the question
+   * and prior turns are sent from the client.
+   */
+  chat: (input: {
+    question: string;
+    symbol: string;
+    timeframe: Timeframe;
+    history?: { role: "user" | "assistant"; content: string }[];
+  }) =>
+    request<{
+      answer: string;
+      model: string;
+      symbol: string;
+      timeframe: Timeframe;
+      as_of: string;
+      data_status: Record<string, string>;
+      snapshot: {
+        quote: Record<string, unknown> | null;
+        technicals: Record<string, unknown> | null;
+        news: { title: string; publisher: string; published: string | null }[];
+      };
+    }>("/api/v1/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+
+  /**
+   * Ask Zenmux for an XAU/USD analysis card.
+   *
+   * Not a language model: the upstream service takes OHLCV and returns a
+   * probability, so the turn selects a model rather than being answered. Candles
+   * are fetched server-side and the API key never reaches this client.
+   *
+   * Direction and confidence come from the classifier. Structure, reasons and
+   * levels are computed from those same candles by the server's indicator pass,
+   * and every reason is tagged with which engine produced it.
+   *
+   * Confidence upstream is `|p - 0.5| * 2`, which lands between roughly 0.05 and
+   * 0.25 on most bars. The card prints the real number rather than scaling it up.
+   */
+  zenmux: (input: {
+    question: string;
+    model?: ZenmuxModelId;
+    timeframe?: ZenmuxTimeframe;
+    history?: { role: "user" | "assistant"; content: string }[];
+  }) =>
+    request<ZenmuxAnalysis>("/api/v1/zenmux", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol: "XAUUSD", ...input }),
+    }),
+
+  /** The two selectable analysis models. */
+  zenmuxModels: () =>
+    request<{ data: ZenmuxModelOption[]; count: number }>("/api/v1/zenmux/models"),
 
   /** Ask the Raggrap self-improvement engine (context-aware AI assistant). */
   raggrapQuery: (query: string, useCache = true) =>
@@ -361,12 +490,10 @@ export const api = {
 
   billingPlan: () => request<PlanInfo>("/api/v1/billing/plan"),
 
-  billingTrial: () =>
-    request<PlanInfo>("/api/v1/billing/trial", {
-      method: "POST",
-    }),
+  // The free Pro trial is discontinued; the endpoint answers 410 Gone. There is
+  // deliberately no client method for it.
 
-  billingCheckout: (plan: "pro" | "ultra") =>
+  billingCheckout: (plan: "starter" | "pro" | "ultra") =>
     request<CheckoutResult>("/api/v1/billing/checkout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

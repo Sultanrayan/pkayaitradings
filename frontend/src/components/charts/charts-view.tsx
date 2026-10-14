@@ -5,15 +5,15 @@ import { Camera, Maximize2, Minimize2, SlidersHorizontal } from "lucide-react";
 import { cn } from "cn";
 
 import { IndicatorChart } from "@/components/charts/indicator-chart";
-import { PriceChart, type ChartMarker, type ChartOverlays, type PriceChartHandle } from "@/components/charts/price-chart";
+import { PriceChart, type ChartOverlays, type PriceChartHandle } from "@/components/charts/price-chart";
 import { useMarketContext } from "@/components/symbol-provider";
 import { EmptyState, ErrorNote, LoadingRows, PageHeader, Panel } from "@/components/shared/primitives";
 import { Button } from "@/components/ui/button";
 import { useOhlc } from "@/hooks/use-ohlc";
-import { useSignals } from "@/hooks/use-api";
 import { atr, bollinger, ema, macd, rsi, stochastic } from "@/lib/indicators";
 import { CHART_TIMEFRAMES } from "@/lib/constants";
-import type { OhlcBar, SignalRecord, Timeframe } from "@/lib/types";
+import { formatPrice } from "@/lib/format";
+import type { Timeframe } from "@/lib/types";
 
 const OVERLAY_LABELS: Array<{ key: keyof ChartOverlays; label: string; color: string }> = [
   { key: "ema20", label: "EMA 20", color: "#eab308" },
@@ -32,49 +32,14 @@ const INDICATOR_LABELS = [
 
 type IndicatorKey = (typeof INDICATOR_LABELS)[number]["key"];
 
-function snapToBar(bars: OhlcBar[], iso: string): number | null {
-  if (!bars.length) return null;
-  const target = new Date(iso).getTime();
-  let best: number | null = null;
-  for (const bar of bars) {
-    const time = new Date(bar.openTime).getTime();
-    if (time <= target) best = time;
-    else break;
-  }
-  return best ?? new Date(bars[0].openTime).getTime();
-}
-
-function signalsToMarkers(bars: OhlcBar[], signals: SignalRecord[]): ChartMarker[] {
-  const markers: ChartMarker[] = [];
-  for (const signal of signals) {
-    if (signal.kind !== "technical_signal") continue;
-    const snapped = snapToBar(bars, signal.created_at);
-    if (snapped === null) continue;
-    if (signal.direction === "BULLISH") {
-      markers.push({
-        time: Math.floor(snapped / 1000),
-        position: "belowBar",
-        color: "#22c55e",
-        shape: "arrowUp",
-        text: "BUY",
-      });
-    } else if (signal.direction === "BEARISH") {
-      markers.push({
-        time: Math.floor(snapped / 1000),
-        position: "aboveBar",
-        color: "#ef4444",
-        shape: "arrowDown",
-        text: "SELL",
-      });
-    }
-  }
-  return markers;
-}
+/**
+ * Signal markers are intentionally not drawn: the AI is not authorised to
+ * write onto the graph. Anything rendered here derives from market data only.
+ */
 
 export function ChartsView() {
   const { symbol, timeframe, setTimeframe, symbols, setSymbol, ticks } = useMarketContext();
   const { series, loading, error } = useOhlc(symbol, timeframe, 400);
-  const signals = useSignals({ symbol, agent: "technical_analyst", limit: 60 });
   const chartRef = useRef<PriceChartHandle | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -111,15 +76,15 @@ export function ChartsView() {
     };
   }, [bars, closes]);
 
-  const markers = useMemo(() => signalsToMarkers(bars, signals.data), [bars, signals.data]);
-
-  const latestTechnical = signals.data.find((record) => record.kind === "technical_signal");
+  // Levels come from price structure only — never from an AI signal payload.
   const levels = useMemo(() => {
-    const payload = latestTechnical?.payload as
-      | { key_levels?: { support?: number | null; resistance?: number | null } }
-      | undefined;
-    return payload?.key_levels ?? undefined;
-  }, [latestTechnical]);
+    if (!bars.length) return undefined;
+    const window = bars.slice(-60);
+    return {
+      support: Math.min(...window.map((bar) => bar.low)),
+      resistance: Math.max(...window.map((bar) => bar.high)),
+    };
+  }, [bars]);
 
   const toggleFullscreen = useCallback(async () => {
     const element = containerRef.current;
@@ -142,7 +107,7 @@ export function ChartsView() {
     <div className="space-y-6">
       <PageHeader
         title="Charts & Analysis"
-        description={`${symbol} · ${timeframe} — candlesticks with overlays, indicator panes and signal markers.`}
+        description={`${symbol} · ${timeframe} — candlesticks with overlays, indicator panes and price levels.`}
         actions={
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => chartRef.current?.fitContent()} className="gap-1.5">
@@ -245,7 +210,7 @@ export function ChartsView() {
           <EmptyState>No candles available for {symbol} {timeframe}.</EmptyState>
         ) : (
           <>
-            <PriceChart ref={chartRef} bars={bars} overlays={overlays} levels={levels} markers={markers} height={440} />
+            <PriceChart ref={chartRef} bars={bars} overlays={overlays} levels={levels} height={440} />
 
             {computed && indicators.rsi ? (
               <IndicatorChart
@@ -292,18 +257,18 @@ export function ChartsView() {
         )}
       </div>
 
-      <Panel title="Signal Markers" description="Technical Analyst signals overlaid on the chart">
-        {signals.data.filter((record) => record.kind === "technical_signal").length === 0 ? (
-          <EmptyState>No technical signals recorded for {symbol} yet.</EmptyState>
-        ) : (
-          <div className="flex flex-wrap gap-2 text-xs">
-            <span className="text-muted-foreground">
-              {signals.data.filter((record) => record.kind === "technical_signal").length} markers shown
-            </span>
-            <span className="text-bull">▲ bullish</span>
-            <span className="text-bear">▼ bearish</span>
-          </div>
-        )}
+      <Panel title="Price levels" description="Drawn from recent swing extremes in the candle data">
+        <div className="flex flex-wrap gap-4 text-xs">
+          <span className="text-bear">
+            Resistance {levels?.resistance ? formatPrice(levels.resistance) : "—"}
+          </span>
+          <span className="text-muted-foreground">
+            Support {levels?.support ? formatPrice(levels.support) : "—"}
+          </span>
+          <span className="text-muted-foreground">
+            Over the last {Math.min(bars.length, 60)} candles
+          </span>
+        </div>
       </Panel>
     </div>
   );

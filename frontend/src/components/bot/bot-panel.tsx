@@ -44,17 +44,36 @@ function contextPrompt(
       `Relevant content: "${community.detail.slice(0, 600)}".${community.symbol ? ` Asset: ${community.symbol}.` : ""}`
     : "";
   return (
-    `[Context] The user is viewing ${symbol} on the ${timeframe} timeframe in the Pkay trading app.` +
+    `[Context] The user is viewing ${symbol} on the ${timeframe} timeframe in the Pkay market analysis app.` +
     `${communityContext} Answer as a helpful market-analysis assistant. The user says: "${text}"`
   );
 }
 
-/** Chat body shared by the floating Bot Supports panel and the dedicated AI page. */
-export function BotPanel({ onClose, communityContext }: { onClose?: () => void; communityContext?: ReturnType<typeof useCommunityBotContext> }) {
+export interface BotPanelProps {
+  onClose?: () => void;
+  communityContext?: ReturnType<typeof useCommunityBotContext>;
+  /** Overrides the header label (e.g. "AI Market Analyst" on the dashboard). */
+  title?: string;
+  /** Overrides the suggested opening questions. */
+  suggestions?: string[];
+  placeholder?: string;
+  greeting?: string;
+}
+
+/** Chat body shared by the floating Bot Supports panel, the Ask AI drawer and the dedicated AI page. */
+export function BotPanel({
+  onClose,
+  communityContext,
+  title = "Bot Supports",
+  suggestions,
+  placeholder = "Ask about the market…",
+  greeting,
+}: BotPanelProps) {
   const { symbol, timeframe } = useMarketContext();
   const liveCommunity = useCommunityBotContext();
   const effectiveCommunity = communityContext ?? liveCommunity;
-  const quickActions = effectiveCommunity ? COMMUNITY_QUICK_ACTIONS : MARKET_QUICK_ACTIONS;
+  const defaultActions = effectiveCommunity ? COMMUNITY_QUICK_ACTIONS : MARKET_QUICK_ACTIONS;
+  const quickActions = suggestions ?? defaultActions;
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -111,7 +130,7 @@ export function BotPanel({ onClose, communityContext }: { onClose?: () => void; 
             <Bot className="size-4" />
           </span>
           <div>
-            <div className="text-sm font-medium">Bot Supports</div>
+            <div className="text-sm font-medium">{title}</div>
             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <span className="size-1.5 rounded-full bg-bull" />
               Online · {symbol} {timeframe}
@@ -140,9 +159,10 @@ export function BotPanel({ onClose, communityContext }: { onClose?: () => void; 
       {messages.length === 0 ? (
         <div className="flex-1 space-y-2 overflow-y-auto px-4 py-4">
           <p className="text-xs text-muted-foreground">
-            {effectiveCommunity
-              ? "Hi! I have context on what you're viewing in the community. Ask me to analyze the post, chart, market or discussion."
-              : "Hi! I'm the Pkay market assistant. Ask me anything about the market — I have context on the chart you're currently viewing."}
+            {greeting ??
+              (effectiveCommunity
+                ? "Hi! I have context on what you're viewing in the community. Ask me to analyze the post, chart, market or discussion."
+                : "Hi! I'm the Pkay market assistant. Ask me anything about the market — I have context on the chart you're currently viewing.")}
           </p>
           <div className="grid grid-cols-1 gap-2 pt-1">
             {quickActions.map((action) => (
@@ -194,7 +214,7 @@ export function BotPanel({ onClose, communityContext }: { onClose?: () => void; 
             ref={inputRef}
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            placeholder="Ask about the market…"
+            placeholder={placeholder}
             autoComplete="off"
           />
           <Button type="submit" size="icon" disabled={busy || !input.trim()} aria-label="Send message">

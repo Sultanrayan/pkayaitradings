@@ -78,11 +78,11 @@ export function generateDemoCandles(
   symbol: string,
   timeframe: ChartTimeframe,
   count = 300,
+  now: number = Date.now(),
 ): OhlcBar[] {
   const asset = demoAsset(symbol);
   const rand = mulberry32(hashSeed(`${symbol}:${timeframe}:${count}`));
   const seconds = TIMEFRAME_SECONDS[timeframe];
-  const now = Date.now();
   const stepVol = asset.vol * Math.sqrt(Math.max(seconds / 3600, 0.05));
   const bars: OhlcBar[] = [];
   let price = asset.base * (0.96 + rand() * 0.08);
@@ -147,11 +147,15 @@ export function generateDemoTick(symbol: string, at: number = Date.now()): Tick 
 }
 
 /** Deterministic technical signals to populate chart markers. */
-export function generateDemoSignals(symbol: string, timeframe: ChartTimeframe, count = 60): SignalRecord[] {
+export function generateDemoSignals(
+  symbol: string,
+  timeframe: ChartTimeframe,
+  count = 60,
+  now: number = Date.now(),
+): SignalRecord[] {
   const asset = demoAsset(symbol);
   const rand = mulberry32(hashSeed(`signals:${symbol}:${timeframe}`));
   const seconds = TIMEFRAME_SECONDS[timeframe];
-  const now = Date.now();
   const records: SignalRecord[] = [];
   for (let i = 0; i < count; i += 1) {
     const bullish = rand() > 0.5;
@@ -196,9 +200,9 @@ export function demoSourceInterval(timeframe: ChartTimeframe): Timeframe {
 export function generateDemoSignalCards(
   symbols: string[] = demoAssetSymbols(),
   cycles = 8,
+  now: number = Date.now(),
 ): SignalRecord[] {
   const records: SignalRecord[] = [];
-  const now = Date.now();
 
   symbols.forEach((symbol, symbolIndex) => {
     const asset = demoAsset(symbol);
@@ -270,7 +274,7 @@ export function generateDemoSignalCards(
             stop_loss: Number(sl.toFixed(4)),
             take_profit: Number(tp.toFixed(4)),
             var_95: Number((range * 0.9).toFixed(4)),
-            reasoning: `VaR stays inside the demo budget with stops placed beyond the swing, so the plan is approved at full size.`,
+            reasoning: `Value at risk stays inside the demo budget and the observed range sits beyond the swing, so exposure would be held at full size.`,
           },
         },
         {
@@ -291,8 +295,8 @@ export function generateDemoSignalCards(
             position_size: Number((0.5 + rand() * 1.5).toFixed(2)),
             risk_approved: true,
             reasoning: bullish
-              ? `Technical, news and risk agents align on ${symbol}. Entry ${entry.toFixed(2)}, initial target ${tp.toFixed(2)} with the stop at ${sl.toFixed(2)} – the reward sits well above the measured risk.`
-              : `Technical and news agents agree on downside for ${symbol}. Entry ${entry.toFixed(2)} targeting ${tp.toFixed(2)} with the protective stop at ${sl.toFixed(2)}.`,
+              ? `Technical, news and structural reads agree on ${symbol}. Momentum, participation and structure line up, giving a ${(confidence * 100).toFixed(0)}% weighted confidence in the bullish view.`
+              : `Technical and news reads point to ${symbol} downside. Weakening momentum and lighter participation hold the weighted confidence at ${(confidence * 100).toFixed(0)}%.`,
           },
         },
       );

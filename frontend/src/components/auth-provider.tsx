@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { api } from "@/lib/api";
@@ -10,7 +10,14 @@ import {
   writeTokenCookie,
   type AuthUser,
 } from "@/lib/auth";
-import { saveProfile } from "@/lib/profile";
+import { getProfile, saveProfile } from "@/lib/profile";
+import { clearUserScopedStorage } from "@/lib/user-storage";
+
+/** Derive a neutral handle from the email local part. */
+function defaultUsername(email: string): string {
+  const local = email.split("@")[0]?.replace(/[^a-zA-Z0-9._-]/g, "") ?? "";
+  return local ? `@${local}` : "@pkayuser";
+}
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -25,6 +32,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [user, setUser] = useState<AuthUser | null>(null);
+  const previousUser = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -39,7 +47,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const me = await api.me();
         if (active) {
           setUser(me);
-          saveProfile({ name: me.name, email: me.email, role: "Trader" });
+          saveProfile({
+            name: me.name,
+            email: me.email,
+            username: getProfile().username || defaultUsername(me.email),
+          });
         }
       } catch {
         clearTokenCookie();
@@ -56,7 +68,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     (token: string, nextUser: AuthUser) => {
       writeTokenCookie(token);
       setUser(nextUser);
-      saveProfile({ name: nextUser.name, email: nextUser.email, role: "Trader" });
+      saveProfile({
+        name: nextUser.name,
+        email: nextUser.email,
+        username: getProfile().username || defaultUsername(nextUser.email),
+      });
       router.refresh();
     },
     [router],
@@ -81,11 +97,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(() => {
+    // Drop per-user browser state so the next account on this machine cannot
+    // see the previous user's data.
+    clearUserScopedStorage();
     clearTokenCookie();
     setUser(null);
     router.push("/login");
     router.refresh();
   }, [router]);
+
+  // Also wipe on an in-place identity switch (session replaced without an
+  // explicit sign-out, e.g. the Google callback or a refreshed cookie).
+  const signedInAs = user?.email ?? null;
+  useEffect(() => {
+    if (previousUser.current && previousUser.current !== signedInAs) {
+      clearUserScopedStorage();
+    }
+    previousUser.current = signedInAs;
+  }, [signedInAs]);
 
   const value = useMemo<AuthContextValue>(
     () => ({ user, loading, login, register, logout }),

@@ -31,31 +31,30 @@ export function AITextLoading({
   }, [texts.length, intervalMs]);
 
   return (
-    <div className="flex items-center justify-center p-6">
+    // Sized and aligned like an assistant message bubble. This previously
+    // rendered as `text-3xl font-bold` inside a centred flex, which filled the
+    // viewport as one oversized heading while a query was in flight.
+    <div className="flex w-full justify-start">
       <motion.div
         animate={{ opacity: 1 }}
         initial={{ opacity: 0 }}
-        transition={{ duration: 0.4 }}
-        className="relative w-full px-4 py-2"
+        transition={{ duration: 0.25 }}
+        className="inline-flex max-w-[85%] items-center rounded-xl rounded-bl-sm border border-border bg-muted px-3 py-2"
       >
-        <AnimatePresence mode="wait">
-          <motion.div
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span
             key={texts[index]}
-            animate={{ opacity: 1, y: 0, backgroundPosition: ["200% center", "-200% center"] }}
-            initial={{ opacity: 0, y: 20 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{
-              opacity: { duration: 0.3 },
-              y: { duration: 0.3 },
-              backgroundPosition: { duration: 2.5, ease: "linear", repeat: Number.POSITIVE_INFINITY },
-            }}
+            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, y: 6 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.2 }}
             className={cn(
-              "flex min-w-max justify-center whitespace-nowrap bg-[length:200%_100%] bg-gradient-to-r from-neutral-950 via-neutral-400 to-neutral-950 bg-clip-text text-3xl font-bold text-transparent dark:from-white dark:via-neutral-600 dark:to-white",
+              "whitespace-nowrap text-[13px] font-normal text-muted-foreground",
               className,
             )}
           >
             {texts[index]}
-          </motion.div>
+          </motion.span>
         </AnimatePresence>
       </motion.div>
     </div>

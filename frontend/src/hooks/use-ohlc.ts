@@ -5,7 +5,37 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { aggregateOhlc } from "@/lib/aggregate";
 import { TIMEFRAME_SOURCE } from "@/lib/constants";
-import type { ChartTimeframe, OhlcSeries } from "@/lib/types";
+import type { ChartTimeframe, OhlcBar, OhlcSeries } from "@/lib/types";
+
+/**
+ * Make a fetched series safe to hand to the chart library.
+ *
+ * biquote serves a *sliding* intraday window, and short intervals (M1/M5/M15)
+ * are the ones where that window turns over fastest — so a response can arrive
+ * with duplicate or out-of-order timestamps while a timeframe switch is in
+ * flight. Lightweight Charts asserts that series are strictly ascending and
+ * unique by time, and throws otherwise, which is what produced the crash when
+ * moving between 15m / 5m / 1m. Normalising here fixes it for every consumer.
+ */
+function normaliseBars(bars: OhlcBar[]): OhlcBar[] {
+  const byTime = new Map<number, OhlcBar>();
+  for (const bar of bars) {
+    const time = new Date(bar.openTime).getTime();
+    if (!Number.isFinite(time)) continue;
+    if (
+      !Number.isFinite(bar.open) ||
+      !Number.isFinite(bar.high) ||
+      !Number.isFinite(bar.low) ||
+      !Number.isFinite(bar.close)
+    ) {
+      continue;
+    }
+    // Later wins, so an in-progress bar updated by a later fetch replaces
+    // the stale copy from the previous one.
+    byTime.set(time, bar);
+  }
+  return [...byTime.entries()].sort(([a], [b]) => a - b).map(([, bar]) => bar);
+}
 
 export interface OhlcState {
   series: OhlcSeries | null;
@@ -31,8 +61,8 @@ export function useOhlc(symbol: string, timeframe: ChartTimeframe, limit = 240):
         const source = TIMEFRAME_SOURCE[timeframe];
         const requested = timeframe === "W1" || timeframe === "MN" ? 1000 : limit;
         const data = await api.ohlc(symbol, source, requested);
-        const series =
-          timeframe === "W1" || timeframe === "MN" ? aggregateOhlc(data, timeframe) : data;
+        const raw = timeframe === "W1" || timeframe === "MN" ? aggregateOhlc(data, timeframe) : data;
+        const series: OhlcSeries = { ...raw, bars: normaliseBars(raw.bars) };
         if (!controller.signal.aborted) setState({ key, series, error: null });
       } catch (cause) {
         if (!controller.signal.aborted) {
@@ -50,7 +80,9 @@ export function useOhlc(symbol: string, timeframe: ChartTimeframe, limit = 240):
 
   const settled = state.key === key;
   return {
-    series: state.series,
+    // Never expose another timeframe's candles under a new label while the
+    // switch is in flight — the chart would otherwise mix two series.
+    series: settled ? state.series : null,
     error: settled ? state.error : null,
     loading: !settled,
   };

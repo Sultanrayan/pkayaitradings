@@ -45,6 +45,18 @@ export interface PriceChartProps {
   markers?: ChartMarker[];
   height?: number | "auto";
   chartType?: ChartType;
+  /**
+   * Pre-Signal reference levels (BE / OP) drawn straight onto the graph.
+   * Unlike `levels`, these are shown automatically — the user never has to
+   * enable them. See `lib/pre-signal.ts`.
+   */
+  preSignal?: {
+    price: number;
+    label: string;
+    color: string;
+    lineStyle?: 0 | 1 | 2 | 3 | 4;
+    title: string;
+  }[];
 }
 
 function toLineData(times: UTCTimestamp[], values: (number | null)[]): LineData<Time>[] {
@@ -59,7 +71,7 @@ function toLineData(times: UTCTimestamp[], values: (number | null)[]): LineData<
 type PriceSeries = ISeriesApi<"Candlestick" | "Line" | "Area">;
 
 export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function PriceChart(
-  { bars, overlays, levels, markers = [], height = 420, chartType = "candlestick" },
+  { bars, overlays, levels, markers = [], height = 420, chartType = "candlestick", preSignal },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -291,7 +303,20 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
         }),
       );
     }
-  }, [levels, series]);
+    // Pre-Signal zones (BE / OP) — always drawn, never opt-in.
+    for (const zone of preSignal ?? []) {
+      priceLinesRef.current.push(
+        price.createPriceLine({
+          price: zone.price,
+          color: zone.color,
+          lineWidth: 2,
+          lineStyle: zone.lineStyle ?? 0,
+          axisLabelVisible: true,
+          title: zone.title,
+        }),
+      );
+    }
+  }, [levels, series, preSignal]);
 
   useEffect(() => {
     markerRef.current?.setMarkers(
@@ -305,7 +330,9 @@ export const PriceChart = forwardRef<PriceChartHandle, PriceChartProps>(function
     );
   }, [markers, series]);
 
-  return <div ref={containerRef} className={height === "auto" ? "h-full w-full" : "w-full"} />;
+  return (
+    <div ref={containerRef} className={height === "auto" ? "h-full w-full" : "w-full"} />
+  );
 });
 
 function setPriceData(

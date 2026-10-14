@@ -1,0 +1,27 @@
+{
+ "anthropic": {
+  "slug": null,
+  "hex": "191919",
+  "path": null
+ },
+ "binance": {
+  "slug": null,
+  "hex": "F0B90B",
+  "path": null
+ },
+ "claude": {
+  "slug": null,
+  "hex": "D97757",
+  "path": null
+ },
+ "okx": {
+  "slug": null,
+  "hex": "000000",
+  "path": null
+ },
+ "openai": {
+  "slug": null,
+  "hex": "412991",
+  "path": null
+ }
+}

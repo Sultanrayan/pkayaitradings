@@ -30,6 +30,8 @@ import type { CalendarEvent, Impact } from "@/lib/types";
 
 function useCountdown(target: string | null, now: number): string {
   if (!target) return "—";
+  // `now` is 0 until hydration completes; don't render a bogus countdown.
+  if (now === 0) return "—";
   const delta = new Date(target).getTime() - now;
   if (delta <= 0) return "released";
   const totalSeconds = Math.floor(delta / 1000);
@@ -88,7 +90,7 @@ export function NewsView() {
     limit: 60,
   });
   const newsSignals = useSignals({ symbol, agent: "news_monitor", limit: 1 });
-  const now = useNow(1000);
+  const now = useNow();
 
   const latestNewsSignal = newsSignals.data[0];
   const sentimentScore =

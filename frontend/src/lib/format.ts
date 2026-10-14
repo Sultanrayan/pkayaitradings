@@ -44,18 +44,26 @@ export function formatCompact(value: number | null | undefined): string {
   );
 }
 
+/**
+ * Time is always formatted in UTC.
+ *
+ * `toLocaleString` without an explicit `timeZone` produces different output on
+ * the server (UTC) than in the browser (user locale/timezone), which breaks
+ * hydration. Pinning to UTC keeps SSR and client identical, and market
+ * timestamps are quoted in UTC anyway.
+ */
 export function formatClock(iso: string | null | undefined): string {
   if (!iso) return "—";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleTimeString("en-US", { hour12: false });
+  return date.toLocaleTimeString("en-US", { hour12: false, timeZone: "UTC" });
 }
 
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString("en-US", { hour12: false });
+  return date.toLocaleString("en-US", { hour12: false, timeZone: "UTC" });
 }
 
 export function formatQuoteAge(seconds: number | null | undefined): string {

@@ -12,6 +12,11 @@ ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 ARG NEXT_PUBLIC_TURNSTILE_SITE_KEY=
 ENV NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY
+# Kept in step with RECAPTCHA_SECRET_KEY on the API. Setting only the secret would
+# make the API reject every credential request, because the client would have no
+# widget to produce a token with. Set both, or neither.
+ARG NEXT_PUBLIC_RECAPTCHA_SITE_KEY=
+ENV NEXT_PUBLIC_RECAPTCHA_SITE_KEY=$NEXT_PUBLIC_RECAPTCHA_SITE_KEY
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

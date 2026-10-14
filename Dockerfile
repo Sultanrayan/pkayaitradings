@@ -19,6 +19,16 @@ COPY agents ./agents
 COPY data_pipeline ./data_pipeline
 COPY execution ./execution
 COPY orchestrator ./orchestrator
+# Bar-anchored signal engine. Declared in [tool.setuptools] packages, so it must be
+# in the build context or `pip install .` fails.
+COPY signals ./signals
+# Telegram signal bot. Same reason: it is declared in [tool.setuptools] packages,
+# so `pip install .` fails without it in the build context.
+COPY telegram_bot ./telegram_bot
+# Raggrap is declared in [tool.setuptools] packages, so it must be in the build
+# context or `pip install .` fails with "package directory 'Raggrap' does not
+# exist". Its heavy deps (spacy/chromadb/neo4j) stay optional extras.
+COPY Raggrap ./Raggrap
 COPY migrations ./migrations
 COPY alembic.ini ./
 

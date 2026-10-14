@@ -10,7 +10,7 @@ import { AITextLoading } from "@/components/ui/ai-text-loading";
 import { Button } from "@/components/ui/button";
 import { useMarketContext } from "@/components/symbol-provider";
 import { api } from "@/lib/api";
-import type { ChartTimeframe } from "@/lib/types";
+import type { ChartTimeframe, Timeframe } from "@/lib/types";
 
 interface ChatMessage {
   id: string;
@@ -51,17 +51,30 @@ function sessionTitle(messages: ChatMessage[]): string {
   return trimmed.length > 42 ? `${trimmed.slice(0, 42)}…` : trimmed;
 }
 
-function buildContext(symbol: string, timeframe: ChartTimeframe, prompt: string): string {
-  return (
-    `[Context] The user is viewing ${symbol} on the ${timeframe} timeframe in the Pkay trading app. ` +
-    `Answer as a helpful market-analysis assistant. The user says: "${prompt}"`
-  );
+/**
+ * Pull the server's failure detail out of an API error so the chat can say what
+ * actually went wrong (assistant unconfigured, provider down) instead of a
+ * generic apology.
+ */
+function errorMessage(error: unknown): string {
+  const detail = (error as { detail?: string } | null)?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  return "I couldn't reach the analysis engine right now. Please try again in a moment.";
 }
 
 let serial = 0;
 function nextId(prefix: string): string {
   serial += 1;
   return `${prefix}-${Date.now().toString(36)}-${serial}`;
+}
+
+/**
+ * The API only serves intraday-through-daily candles, so the chart's weekly and
+ * monthly ranges fall back to daily rather than being sent as an unknown
+ * interval the backend would reject.
+ */
+function toApiTimeframe(timeframe: ChartTimeframe): Timeframe {
+  return timeframe === "W1" || timeframe === "MN" ? "D1" : timeframe;
 }
 
 export function AiView() {
@@ -131,12 +144,23 @@ export function AiView() {
       );
       setBusy(true);
       try {
-        const response = await api.raggrapQuery(buildContext(symbol, timeframe, trimmed));
+        // Only the question and prior turns go to the server: it fetches the
+        // live quote, candles and news itself so the answer is grounded in
+        // real data rather than in whatever the client claimed to be showing.
+        const priorTurns = (active?.messages ?? [])
+          .slice(-8)
+          .map((entry) => ({ role: entry.role, content: entry.text }));
+        const response = await api.chat({
+          question: trimmed,
+          symbol,
+          timeframe: toApiTimeframe(timeframe),
+          history: priorTurns,
+        });
         const assistantMessage: ChatMessage = {
           id: nextId("msg"),
           role: "assistant",
           text: response.answer,
-          model,
+          model: response.model || model,
         };
         setChats((previous) =>
           previous.map((chat) =>
@@ -145,11 +169,11 @@ export function AiView() {
               : chat,
           ),
         );
-      } catch {
+      } catch (error) {
         const fallback: ChatMessage = {
           id: nextId("msg"),
           role: "assistant",
-          text: "I couldn't reach the analysis engine right now. Please try again in a moment.",
+          text: errorMessage(error),
           model,
         };
         setChats((previous) =>
@@ -161,7 +185,7 @@ export function AiView() {
         setBusy(false);
       }
     },
-    [activeId, busy, symbol, timeframe],
+    [active, activeId, busy, symbol, timeframe],
   );
 
   const messages = active?.messages ?? [];

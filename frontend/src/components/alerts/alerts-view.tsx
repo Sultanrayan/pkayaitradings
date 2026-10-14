@@ -23,7 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
+import { FlipToggle } from "@/components/ui/flip-button";
 import { useAlerts } from "@/hooks/use-api";
 import { AGENTS, SIGNAL_DIRECTIONS } from "@/lib/constants";
 import { formatDateTime } from "@/lib/format";
@@ -218,7 +218,7 @@ export function AlertsView() {
                     </span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <Switch
+                    <FlipToggle
                       checked={rule.enabled}
                       onCheckedChange={(checked) =>
                         setRules((previous) =>
@@ -227,6 +227,7 @@ export function AlertsView() {
                           ),
                         )
                       }
+                      ariaLabel={`Toggle alert rule ${rule.id}`}
                     />
                     <button
                       type="button"
