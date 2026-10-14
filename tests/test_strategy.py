@@ -69,14 +69,48 @@ def test_compute_indicators_adds_expected_columns() -> None:
 
 
 def test_signal_from_composite_thresholds() -> None:
+    """Always directional: no composite value produces NEUTRAL any more."""
     params = TechnicalParams()
-    neutral, neutral_conf = signal_from_composite(0.05, 1.0, params)
+    weak, weak_conf = signal_from_composite(0.05, 1.0, params)
     bullish, _ = signal_from_composite(0.5, 1.0, params)
     bearish, _ = signal_from_composite(-0.5, 1.0, params)
-    assert neutral is Direction.NEUTRAL
-    assert neutral_conf == 0.5
+
+    assert weak is Direction.BULLISH, "a small positive lean is still BUY, at low confidence"
+    assert weak_conf < 0.30, "the weakness must show up as confidence, not as a refusal"
     assert bullish is Direction.BULLISH
     assert bearish is Direction.BEARISH
+
+
+@pytest.mark.parametrize(
+    "composite",
+    [0.0, 0.001, 0.05, 0.14, 0.15, 0.16, -0.001, -0.05, -0.14, -0.15, -0.5, 0.5, 1.0, -1.0],
+)
+def test_signal_from_composite_never_returns_neutral(composite: float) -> None:
+    """The whole point of the change, swept across the full composite range.
+
+    ``neutral_threshold`` used to carve out a band around zero. Every value in
+    and around that band must now produce a direction.
+    """
+    for trend_strength in (0.4, 0.7, 1.0):
+        direction, confidence = signal_from_composite(
+            composite, trend_strength, TechnicalParams()
+        )
+        assert direction in {Direction.BULLISH, Direction.BEARISH}
+        assert 0.0 <= confidence <= 1.0
+
+
+def test_a_zero_composite_still_yields_a_direction() -> None:
+    """The function must be total. With no edge either way the tie-break is
+    arbitrary, but it must be stable rather than raising or returning None."""
+    direction, confidence = signal_from_composite(0.0, 1.0, TechnicalParams())
+    assert direction in {Direction.BULLISH, Direction.BEARISH}
+    assert confidence == pytest.approx(0.05), "confidence is floored, never zero"
+
+
+def test_confidence_is_floored_above_zero() -> None:
+    """Zero confidence alongside a direction reads as a bug to any consumer."""
+    _, confidence = signal_from_composite(0.0, 0.4, TechnicalParams())
+    assert confidence >= 0.05
 
 
 def test_compute_indicators_missing_columns_raises() -> None:

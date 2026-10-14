@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from shared.config import Settings
-from shared.llm import LLMClient, build_llm_client
+from shared.llm import LLMClient, build_analysis_llm_client
 from shared.logging import get_logger
 from shared.schemas.enums import Sentiment
 
@@ -76,7 +76,14 @@ _PROMPT = (
     "Classify the overall market sentiment of these financial headlines for gold "
     "and bitcoin. Reply with strict JSON: "
     '{{"sentiment": one of VERY_BULLISH|BULLISH|NEUTRAL|BEARISH|VERY_BEARISH, '
-    '"confidence": number between 0 and 1, "rationale": short string}}.\n\n{headlines}'
+    '"confidence": number between 0 and 1, "score": number between -1 and 1, '
+    '"rationale": short string}}.\n'
+    "You MUST always return a sentiment and a numeric score. Never abstain, and "
+    "never reply 'insufficient news'. NEUTRAL with score 0.0 is the correct and "
+    "expected answer when the headlines genuinely balance out — it is a weight of "
+    "zero, not a refusal to classify, and it never blocks a trade.\n"
+    "Sentiment is advisory only: it adjusts confidence and never suppresses a "
+    "signal.\n\n{headlines}"
 )
 
 
@@ -169,14 +176,23 @@ class LLMSentimentClassifier:
                 rationale=str(payload.get("rationale", "llm")),
             )
         except Exception as exc:
-            _logger.warning("sentiment.llm_failed", error=repr(exc))
+            # Lexicon fallback is invisible in the signal it produces, so the
+            # reason and attempt count are the only record that the model was
+            # not consulted.
+            _logger.warning(
+                "sentiment.llm_failed",
+                error=repr(exc),
+                reason=getattr(exc, "reason", "unknown"),
+                attempts=getattr(exc, "attempts", 1),
+                headline_count=len(texts),
+            )
             return await self._fallback.classify(texts)
 
 
 def build_sentiment_classifier(settings: Settings) -> SentimentClassifier:
     """Return the configured classifier, or the lexicon default."""
     lexicon = LexiconSentimentClassifier()
-    client = build_llm_client(settings)
+    client = build_analysis_llm_client(settings)
     if client is not None:
         return LLMSentimentClassifier(client, fallback=lexicon)
     return lexicon

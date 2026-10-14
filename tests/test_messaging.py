@@ -91,3 +91,87 @@ async def test_publish_rejects_on_closed_bus() -> None:
     agent = _StubAgent(bus=bus)
     with pytest.raises(RuntimeError, match="closed"):
         await agent.publish({"x": 1}, kind="technical_signal")
+
+
+# --------------------------------------------------------------------------- #
+# Redis fallback
+# --------------------------------------------------------------------------- #
+
+
+def test_redact_strips_credentials() -> None:
+    """A password in the URL must never reach the log store."""
+    from shared.messaging import _redact_redis_url
+
+    assert (
+        _redact_redis_url("redis://user:hunter2@cache.internal:6379/0")
+        == "redis://<redacted>@cache.internal:6379/0"
+    )
+
+
+def test_redact_leaves_a_credential_free_url_untouched() -> None:
+    from shared.messaging import _redact_redis_url
+
+    assert _redact_redis_url("redis://redis:6379/0") == "redis://redis:6379/0"
+
+
+def test_redact_handles_a_password_only_url() -> None:
+    from shared.messaging import _redact_redis_url
+
+    assert _redact_redis_url("redis://:pw@host:6379") == "redis://<redacted>@host:6379"
+
+
+async def test_create_message_bus_falls_back_when_ping_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unreachable Redis must degrade, not raise."""
+    from shared import messaging
+    from shared.config import Settings
+
+    class _DeadBus:
+        def __init__(self, _url: str) -> None:
+            pass
+
+        async def ping(self) -> bool:
+            raise ConnectionRefusedError(111, "Connection refused")
+
+    monkeypatch.setattr(messaging, "RedisMessageBus", _DeadBus)
+    settings = Settings(redis_url="redis://redis:6379/0", llm_provider="none")
+    bus = await messaging.create_message_bus(settings)
+    assert isinstance(bus, messaging.InMemoryMessageBus)
+
+
+async def test_create_message_bus_logs_error_with_redacted_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The degradation must be loud and must name the unreachable target.
+
+    A silent fallback is how a nine-day Redis outage went unnoticed, so the log
+    is captured and asserted to carry the URL with credentials stripped.
+    """
+    from shared import messaging
+    from shared.config import Settings
+
+    class _DeadBus:
+        def __init__(self, _url: str) -> None:
+            pass
+
+        async def ping(self) -> bool:
+            raise ConnectionRefusedError(111, "Connection refused")
+
+    events: list[tuple[str, dict[str, object]]] = []
+
+    def _capture(event: str, *args: object, **kwargs: object) -> None:
+        events.append((event, kwargs))
+
+    monkeypatch.setattr(messaging, "RedisMessageBus", _DeadBus)
+    monkeypatch.setattr(messaging._logger, "error", _capture)
+
+    settings = Settings(redis_url="redis://user:hunter2@cache:6379/0", llm_provider="none")
+    await messaging.create_message_bus(settings)
+
+    assert len(events) == 1
+    name, event = events[0]
+    assert name == "bus.redis_degraded"
+    assert event["url"] == "redis://<redacted>@cache:6379/0"
+    assert "hunter2" not in str(event)
+    assert "Connection refused" in str(event["error"])

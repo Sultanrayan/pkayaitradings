@@ -142,5 +142,8 @@ MessageKind = Literal[
     "trade_proposal",
     "risk_assessment",
     "trade_decision",
+    # Emitted by the bar-anchored signal engine (signals/) when a confirmed,
+    # closed candle produces a BUY/SELL signal.
+    "signal",
     "order_fill",
 ]

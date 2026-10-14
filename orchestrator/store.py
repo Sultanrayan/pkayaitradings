@@ -14,6 +14,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from pydantic import ValidationError
+
+from shared.logging import get_logger
 from shared.schemas.enums import AgentName, Decision, Direction, Sentiment
 from shared.schemas.signals import (
     NewsSignal,
@@ -22,6 +25,8 @@ from shared.schemas.signals import (
     TradeDecision,
 )
 from shared.utils.time import utcnow
+
+_logger = get_logger(__name__)
 
 _SENTIMENT_DIRECTION: dict[Sentiment, Direction] = {
     Sentiment.VERY_BULLISH: Direction.BULLISH,
@@ -146,6 +151,66 @@ class SignalStore:
             created_at=created_at,
             payload=payload,
         )
+
+    def record_signal(
+        self,
+        *,
+        symbol: str,
+        correlation_id: str,
+        agent: str,
+        kind: str,
+        direction: str,
+        confidence: float,
+        payload: dict[str, Any],
+    ) -> SignalRecord:
+        """Append one agent record outside a full cycle.
+
+        Used by agents that publish independently of the four-agent cycle — the
+        Signal Updater being the first. Returns the stored record so the caller
+        can reference its id without re-querying.
+
+        Args:
+            symbol: Instrument ticker; upper-cased before storage.
+            correlation_id: Groups the update with the cycle it re-evaluated.
+            agent: Value from :class:`~shared.schemas.enums.AgentName`.
+            kind: Signal kind, e.g. ``"trade_decision"``.
+            direction: Direction token, e.g. ``"ADJUST"``.
+            confidence: Confidence in ``[0, 1]``.
+            payload: JSON-serialisable signal body.
+        """
+        record = self._make(
+            symbol.upper(),
+            correlation_id,
+            agent,
+            kind,
+            direction,
+            confidence,
+            payload,
+            utcnow(),
+        )
+        self._records.append(record)
+        return record
+
+    def latest_decision(self, symbol: str) -> TradeDecision | None:
+        """Return the most recent ``TradeDecision`` recorded for ``symbol``.
+
+        Used by the Signal Updater to seed its active-signal set from whatever
+        the Decision Maker last published. Returns ``None`` when the symbol has
+        no recorded decision, or when the stored payload no longer validates
+        against the current schema.
+        """
+        for record in reversed(self._records):
+            if record.kind != "trade_decision" or record.symbol != symbol.upper():
+                continue
+            try:
+                return TradeDecision.model_validate(record.payload)
+            except ValidationError:
+                # A payload written by an older schema version is skipped rather
+                # than allowed to break the updater's startup.
+                _logger.warning(
+                    "store.unreadable_decision", symbol=symbol, record_id=record.id
+                )
+        return None
 
     # ------------------------------------------------------------------ #
     # Reading

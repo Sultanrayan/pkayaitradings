@@ -12,6 +12,11 @@ from dataclasses import dataclass
 
 from shared.schemas.enums import Direction
 
+#: Smallest allocation expressed as a fraction of equity, used when Kelly returns
+#: zero. A tenth of a percent is small enough to be irrelevant and large enough
+#: that the position is real.
+_MIN_ALLOCATION = 0.001
+
 
 @dataclass(frozen=True)
 class PositionPlan:
@@ -61,7 +66,10 @@ def plan_position(
         price: Entry price.
         atr: Average True Range used for stop distance.
         confidence: Model confidence used as the win probability.
-        direction: Trade direction; must not be ``NEUTRAL``.
+        direction: Trade direction. ``NEUTRAL`` is accepted and mapped to the bearish
+            geometry, because the agents no longer emit it and a sizer that
+            refuses to size a neutral direction would turn a labelling gap into a
+            crash.
         kelly_fraction: Fraction of full Kelly to allocate.
         atr_stop_mult: ATR multiple for the stop distance.
         reward_risk: Take-profit distance as a multiple of stop distance.
@@ -69,7 +77,10 @@ def plan_position(
         max_risk_per_trade: Cap on capital at risk as a fraction of equity.
 
     Raises:
-        ValueError: On non-positive equity/price/ATR or a neutral direction.
+        ValueError: On non-positive equity, price or ATR. These are data faults
+            rather than trading judgements — there is no meaningful position size
+            without them, and guessing one would put real money at risk on a
+            number invented at runtime.
     """
     if equity <= 0:
         raise ValueError("equity must be positive")
@@ -77,8 +88,6 @@ def plan_position(
         raise ValueError("price must be positive")
     if atr <= 0:
         raise ValueError("atr must be positive")
-    if direction is Direction.NEUTRAL:
-        raise ValueError("Cannot size a NEUTRAL trade")
 
     kelly = kelly_criterion(confidence, reward_risk)
     allocation = min(kelly * kelly_fraction, max_position_fraction)
@@ -91,6 +100,13 @@ def plan_position(
     if risk_amount > max_risk_amount and stop_distance > 0:
         quantity = max_risk_amount / stop_distance
         risk_amount = max_risk_amount
+
+    # A Kelly allocation of zero (a coin-flip confidence) used to produce a zero
+    # quantity, which the caller read as "no trade". Floor it at a small
+    # fraction of equity so a weak call is still expressible; the caller's
+    # strength-based sizing decides how much of it to actually risk.
+    if quantity <= 0:
+        quantity = (equity * _MIN_ALLOCATION) / price
 
     notional = quantity * price
     allocation = notional / equity if equity else 0.0

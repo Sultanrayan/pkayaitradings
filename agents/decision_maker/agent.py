@@ -47,7 +47,7 @@ from shared.episodic_memory import (
 )
 from shared.order_flow import OrderFlowSignal
 from shared.regime import MarketRegime, adaptive_weights
-from shared.schemas.enums import AgentName, Decision, Direction
+from shared.schemas.enums import AgentName, Decision, Direction, Strength
 from shared.schemas.messages import Fill
 from shared.schemas.signals import (
     NewsSignal,
@@ -217,11 +217,41 @@ class DecisionMakerAgent(BaseAgent):
             order_id = fill.order_id
             executed = True
 
+        # --- Always-actionable payload ---
+        #
+        # Confidence drives the strength band, and the band drives the size. Both
+        # are derived from the same number so a consumer can never be told
+        # "STRONG" alongside a quarter-size position.
+        # Conviction, not bullishness. ``final_score`` is a 0..1 bullishness scale
+        # where 0.5 means "no opinion", so its distance from 0.5 is the aggregate's
+        # conviction.
+        #
+        # Capped by the technical agent's own confidence. Without that cap a *weak*
+        # read scores near maximum conviction — ``score_technical`` maps
+        # bearish-with-low-confidence to 1.0 — so a technical WEAK signal would
+        # publish as STRONG on the same cycle. Conviction cannot exceed the
+        # primary signal's confidence in itself.
+        aggregate_conviction = abs(adjusted_score - 0.5) * 2.0
+        conviction = min(aggregate_conviction, technical.confidence)
+        strength = Strength.from_confidence(conviction)
+        size = _sized_position(strength, risk)
+        entry = technical.price
+        entry, tp1, tp2, sl = _levels(entry, risk, decision)
+
+        recommendation = _recommendation(decision, strength, size, technical, risk, news)
+        explanation = _explanation(
+            technical, news, risk, breakdown, conviction, strength
+        )
+        risk_notes = _risk_notes(technical, risk, news, cross, order_flow)
+        invalidation = _invalidation(sl, entry, tp1, risk, decision)
+
         self.log.info(
             "decision_maker.decision",
             symbol=technical.symbol,
             decision=decision.value,
             final_score=adjusted_score,
+            strength=strength.value,
+            position_size=size,
             regime=regime.value if regime else "unknown",
             review_adjustment=review.confidence_adjustment,
             memory_adjustment=recall.adjustment,
@@ -235,10 +265,17 @@ class DecisionMakerAgent(BaseAgent):
             news_score=breakdown.news_score,
             risk_score=breakdown.risk_score,
             risk_approved=risk.approved,
-            position_size=risk.position_size if decision in {Decision.BUY, Decision.SELL} else 0.0,
-            entry_price=technical.price,
-            stop_loss=risk.stop_loss,
-            take_profit=risk.take_profit,
+            position_size=size,
+            entry_price=entry,
+            stop_loss=sl,
+            take_profit=tp1,
+            tp1=tp1,
+            tp2=tp2,
+            strength=strength,
+            recommendation=recommendation,
+            explanation=explanation,
+            risk_notes=risk_notes,
+            invalidation=invalidation,
             reasoning=reasoning,
             executed=executed,
             order_id=order_id,
@@ -334,6 +371,171 @@ def _episode_features(
             else 0.5
         ),
     }
+
+
+def _sized_position(strength: Strength, risk: RiskAssessment) -> float:
+    """Units to trade, from the strength band scaled by the risk manager.
+
+    Returns ``0.0`` on a drawdown veto. The strength band supplies the base
+    multiplier and ``risk.position_size_multiplier`` the regime scaling, so a
+    STRONG call in a high-risk regime still ends up small.
+    """
+    if not risk.approved:
+        return 0.0
+    band = strength.position_size
+    return round(risk.position_size * band * risk.position_size_multiplier, 6)
+
+
+def _levels(
+    entry: float | None, risk: RiskAssessment, decision: Decision
+) -> tuple[float | None, float | None, float | None, float | None]:
+    """Entry, TP1, TP2 and stop, guaranteed mutually consistent.
+
+    Returns ``(entry, tp1, tp2, stop)``.
+
+    Three invariants hold here, each of which was violated at least once in
+    development and each of which produces a dangerous order when broken:
+
+    1. The stop sits on the losing side of entry for the stated direction.
+    2. Both targets sit on the winning side, so neither can be "take profit" at a
+       level the trade would never reach.
+    3. TP1 and TP2 differ. A card showing TP1 == TP2 is a bug, not a conservative
+       target, and it silently doubles the size at the first level.
+
+    The Risk Manager supplies a stop and one target. Everything is re-derived from
+    a single risk distance so the four levels cannot disagree with each other.
+    """
+    long_side = decision is Decision.BUY
+    raw_stop = risk.stop_loss
+
+    if entry is None or entry <= 0:
+        return entry, risk.take_profit, risk.take_profit, raw_stop
+
+    # Recover a sane risk distance. The manager's stop is preferred; when it is
+    # unusable (missing, non-positive, or on the wrong side) fall back to the
+    # target's distance from entry, then to 1% of entry.
+    distance = 0.0
+    if raw_stop is not None and raw_stop > 0:
+        candidate = abs(entry - raw_stop)
+        correct_side = raw_stop < entry if long_side else raw_stop > entry
+        if candidate > 0 and correct_side:
+            distance = candidate
+    if distance <= 0 and risk.take_profit is not None and risk.take_profit > 0:
+        candidate = abs(entry - risk.take_profit)
+        if candidate > 0:
+            distance = candidate
+    if distance <= 0:
+        distance = entry * 0.01
+
+    direction_sign = 1.0 if long_side else -1.0
+    stop = round(entry - direction_sign * distance, 2)
+    tp1 = round(entry + direction_sign * distance * 2.0, 2)
+    tp2 = round(entry + direction_sign * distance * 3.0, 2)
+    return entry, tp1, tp2, stop
+
+
+def _recommendation(
+    decision: Decision,
+    strength: Strength,
+    size: float,
+    technical: TechnicalSignal,
+    risk: RiskAssessment,
+    news: NewsSignal,
+) -> str:
+    """Actionable advice naming the direction, size and conditions."""
+    if decision is Decision.SKIP:
+        return (
+            "Do not trade — the portfolio drawdown limit was breached. "
+            "Reduce exposure and wait for it to be reviewed."
+        )
+    side = "long" if decision is Decision.BUY else "short"
+    news_word = news.sentiment.value.lower().replace("_", " ")
+    parts = [f"{decision.value} {side} at {size:.4f} size"]
+    parts.append(f"strength {strength.value}")
+    parts.append(f"technical {technical.signal.value.lower()}")
+    parts.append(f"news {news_word}")
+    parts.append(f"risk {'normal' if risk.approved else 'vetoed'}")
+    if strength is Strength.WEAK:
+        parts.append("small size only — confirmation preferred")
+    return ", ".join(parts) + "."
+
+
+def _explanation(
+    technical: TechnicalSignal,
+    news: NewsSignal,
+    risk: RiskAssessment,
+    breakdown: Any,
+    conviction: float,
+    strength: Strength,
+) -> str:
+    """Why this call, from the numbers that produced it."""
+    technical_text = technical.explanation or (
+        f"Technical {technical.signal.value.lower()} at "
+        f"{technical.confidence:.2f} confidence"
+    )
+    return (
+        f"{technical_text} "
+        f"News sentiment {news.sentiment.value.lower()} (score {news.sentiment_score:+.2f}). "
+        f"Risk {'cleared' if risk.approved else 'vetoed'}"
+        + (f", size multiplier {risk.position_size_multiplier:.2f}" if risk.approved else "")
+        + f". Weighted bullishness {breakdown.final_score:.3f} "
+        f"(technical {breakdown.technical_score:.2f}, news {breakdown.news_score:.2f}, "
+        f"risk {breakdown.risk_score:.2f}). Conviction {conviction:.2f} "
+        f"→ {strength.value}, capped by technical confidence {technical.confidence:.2f}."
+    )
+
+
+def _risk_notes(
+    technical: TechnicalSignal,
+    risk: RiskAssessment,
+    news: NewsSignal,
+    cross: Any,
+    order_flow: OrderFlowSignal | None,
+) -> str:
+    """What could go wrong, assembled from every agent that flagged something."""
+    notes: list[str] = []
+    if technical.risk_notes:
+        notes.append(technical.risk_notes)
+    if risk.risk_notes:
+        notes.append(risk.risk_notes)
+    if news.risk_notes:
+        notes.append(news.risk_notes)
+    warnings = list(getattr(cross, "warnings", ()) or ())
+    notes.extend(str(w) for w in warnings)
+    if order_flow is not None and order_flow.direction is not technical.signal:
+        notes.append(
+            f"Order flow is {order_flow.direction.value.lower()} "
+            f"({order_flow.score:+.2f}) against the technical read"
+        )
+    if not notes:
+        return "No counter-signals flagged by any agent."
+    return " ".join(notes)
+
+
+def _invalidation(
+    sl: float | None,
+    entry: float | None,
+    tp1: float | None,
+    risk: RiskAssessment,
+    decision: Decision,
+) -> str:
+    """The condition that cancels the trade."""
+    if decision is Decision.SKIP:
+        return "Drawdown limit breached; no trade is valid until it is reviewed."
+    parts: list[str] = []
+    if sl is not None and entry is not None:
+        if decision is Decision.BUY:
+            parts.append(f"A close below the stop at {sl:.2f}")
+        else:
+            parts.append(f"A close above the stop at {sl:.2f}")
+    if tp1 is not None and entry is not None:
+        parts.append(
+            f"or a failure to reach TP1 at {tp1:.2f} within a few candles"
+        )
+    if risk.var_95:
+        parts.append(f"or a 1-day move beyond {risk.var_95:.2%} VaR")
+    parts.append("or a risk regime change that widens the stop materially")
+    return ", ".join(parts) + "."
 
 
 def _clamp01(value: float) -> float:

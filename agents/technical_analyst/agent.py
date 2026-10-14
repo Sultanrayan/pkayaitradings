@@ -66,8 +66,18 @@ class TechnicalAnalystAgent(BaseAgent):
         timeframe: Timeframe = Timeframe.H1,
         *,
         limit: int = 300,
+        correlation_id: str | None = None,
     ) -> TechnicalSignal:
-        """Fetch data and produce a :class:`TechnicalSignal` without publishing."""
+        """Fetch data and produce a :class:`TechnicalSignal` without publishing.
+
+        Args:
+            symbol: Instrument ticker.
+            timeframe: Candle interval to analyse.
+            limit: Number of candles to fetch.
+            correlation_id: Cycle identifier, threaded into the narrator context
+                so a degraded LLM call can be attributed to the cycle that
+                triggered it. Optional, and not used by the signal itself.
+        """
         series = await self.client.get_ohlc(symbol, interval=timeframe, limit=limit)
         frame = to_frame(series)
         result = evaluate(frame, self.params)
@@ -96,6 +106,7 @@ class TechnicalAnalystAgent(BaseAgent):
                 "key_levels": result.key_levels.model_dump(),
                 "indicators": result.indicators.model_dump(),
                 "reasoning": "; ".join(reasons),
+                "correlation_id": correlation_id,
             }
         )
         self.log.info(
@@ -104,16 +115,27 @@ class TechnicalAnalystAgent(BaseAgent):
             timeframe=timeframe.value,
             signal=signal.value,
             confidence=confidence,
+            strength=result.strength.value,
+            correlation_id=correlation_id,
         )
+        # ``explanation``, ``risk_notes``, ``invalidation`` and ``recommendation``
+        # come from the strategy rather than the narrator: they are built from the
+        # indicator values, so they cannot drift from the numbers they describe
+        # the way free-form generated prose can.
         return TechnicalSignal(
             symbol=symbol.upper(),
             timeframe=timeframe,
             signal=signal,
             confidence=confidence,
+            strength=result.strength,
             key_levels=result.key_levels,
             indicators=result.indicators,
             reasoning=reasoning,
             price=result.price,
+            explanation=result.explanation,
+            risk_notes=result.risk_notes,
+            invalidation=result.invalidation,
+            recommendation=result.recommendation,
         )
 
     async def run(
@@ -126,7 +148,12 @@ class TechnicalAnalystAgent(BaseAgent):
     ) -> TechnicalSignal:
         """Analyse ``symbol`` and publish the resulting signal."""
         signal = await self._guarded(
-            TechnicalSignal, self.analyze, symbol, timeframe, limit=limit
+            TechnicalSignal,
+            self.analyze,
+            symbol,
+            timeframe,
+            limit=limit,
+            correlation_id=correlation_id,
         )
         await self.publish(signal, kind="technical_signal", correlation_id=correlation_id)
         return signal

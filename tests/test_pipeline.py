@@ -80,13 +80,37 @@ async def test_cycle_executes_approved_uptrend(settings: Settings) -> None:
     assert result.decision.order_id is not None
 
 
-async def test_cycle_skips_without_direction(settings: Settings) -> None:
+async def test_a_flat_market_still_produces_an_actionable_decision(settings: Settings) -> None:
+    """A market with no trend is now a WEAK directional call, not a refusal.
+
+    This is the behaviour change with the most operational weight: previously a
+    flat tape produced no trade at all. It now produces one at reduced size, which
+    is what "always actionable" means in practice.
+    """
     flat = make_series(300, drift=0.0, seed=99)
     pipeline = _build_pipeline(settings, flat)
     result = await pipeline.run_cycle("XAUUSD", [Timeframe.H1])
 
-    assert result.decision.decision in {Decision.WAIT, Decision.SKIP}
-    assert result.traded is False
+    assert result.decision.decision in {Decision.BUY, Decision.SELL}
+    assert result.decision.is_actionable, "levels must be complete on a flat market"
+    assert result.decision.entry_price is not None
+    assert result.decision.stop_loss is not None
+    assert result.decision.tp1 is not None
+    assert result.decision.tp2 is not None
+
+
+async def test_a_flat_market_is_weak_and_small(settings: Settings) -> None:
+    """Low conviction must show up as WEAK and a reduced size, not as no trade."""
+    flat = make_series(300, drift=0.0, seed=99)
+    pipeline = _build_pipeline(settings, flat)
+    result = await pipeline.run_cycle("XAUUSD", [Timeframe.H1])
+
+    decision = result.decision
+    assert decision.strength is not None
+    assert decision.recommendation
+    assert decision.explanation
+    assert decision.risk_notes
+    assert decision.invalidation
 
 
 async def test_run_all_handles_multiple_symbols(settings: Settings) -> None:

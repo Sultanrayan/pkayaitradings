@@ -166,7 +166,7 @@ async def test_google_callback_honors_next_in_state(
         orchestrator_main, "exchange_code_for_identity", AsyncMock(return_value=identity)
     )
     state = sign_payload(
-        {"nonce": "n", "exp": int(time.time()) + 60, "next": "/pkay-control-x7q9"}, SECRET
+        {"nonce": "n", "exp": int(time.time()) + 60, "next": "/admin"}, SECRET
     )
 
     response = await client.get(
@@ -175,7 +175,7 @@ async def test_google_callback_honors_next_in_state(
         follow_redirects=False,
     )
     assert response.status_code == 307
-    assert response.headers["location"] == "http://frontend.test/pkay-control-x7q9"
+    assert response.headers["location"] == "http://frontend.test/admin"
     assert response.cookies.get("pkay_token")
 
 

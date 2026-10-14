@@ -8,6 +8,7 @@ from shared.schemas.enums import (
     Impact,
     MarketState,
     Sentiment,
+    Strength,
     Timeframe,
 )
 from shared.schemas.market import (
@@ -70,6 +71,7 @@ __all__ = [
     "RiskAssessment",
     "RiskCheck",
     "Sentiment",
+    "Strength",
     "SymbolInfo",
     "TechnicalSignal",
     "Tick",

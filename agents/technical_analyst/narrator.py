@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from shared.config import Settings
-from shared.llm import LLMClient, build_llm_client
+from shared.llm import LLMClient, build_analysis_llm_client
 from shared.logging import get_logger
 
 _logger = get_logger(__name__)
@@ -17,7 +17,11 @@ _logger = get_logger(__name__)
 _SYSTEM = "You explain technical analysis signals concisely and factually."
 _PROMPT = (
     "Explain this technical signal in at most three sentences. Mention the main "
-    "drivers and what would invalidate it.\nContext: {context}"
+    "drivers and what would invalidate it.\n"
+    "You MUST always describe a direction. Never output SKIP, WAIT, NEUTRAL, or "
+    "'no trade'. If the indicators are mixed, name the direction the evidence "
+    "leans toward and state the weakness explicitly as a low-confidence call.\n"
+    "Context: {context}"
 )
 
 
@@ -49,14 +53,26 @@ class LLMSignalNarrator:
         try:
             return await self._client.complete(_PROMPT.format(context=context), system=_SYSTEM)
         except Exception as exc:
-            _logger.warning("narrator.technical_failed", error=repr(exc))
+            # The fallback is indistinguishable from a real reading unless it is
+            # logged: a template narrative produces a perfectly plausible signal
+            # with a round confidence. reason/attempts say whether the model was
+            # rate limited, timed out, or ran out of budget.
+            _logger.warning(
+                "narrator.technical_failed",
+                error=repr(exc),
+                reason=getattr(exc, "reason", "unknown"),
+                attempts=getattr(exc, "attempts", 1),
+                symbol=context.get("symbol"),
+                timeframe=context.get("timeframe"),
+                correlation_id=context.get("correlation_id"),
+            )
             return await self._fallback.narrate(context)
 
 
 def build_signal_narrator(settings: Settings) -> SignalNarrator:
     """Return the configured narrator, or the template default."""
     template = TemplateSignalNarrator()
-    client = build_llm_client(settings)
+    client = build_analysis_llm_client(settings)
     if client is not None:
         return LLMSignalNarrator(client, fallback=template)
     return template

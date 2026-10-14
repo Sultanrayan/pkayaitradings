@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from shared.config import Settings
-from shared.llm import LLMClient, build_llm_client
+from shared.llm import LLMClient, build_analysis_llm_client
 from shared.logging import get_logger
 
 _logger = get_logger(__name__)
@@ -49,14 +49,20 @@ class LLMRiskNarrator:
         try:
             return await self._client.complete(_PROMPT.format(context=context), system=_SYSTEM)
         except Exception as exc:
-            _logger.warning("narrator.risk_failed", error=repr(exc))
+            _logger.warning(
+                "narrator.risk_failed",
+                error=repr(exc),
+                reason=getattr(exc, "reason", "unknown"),
+                attempts=getattr(exc, "attempts", 1),
+                symbol=context.get("symbol"),
+            )
             return await self._fallback.narrate(context)
 
 
 def build_risk_narrator(settings: Settings) -> RiskNarrator:
     """Return the configured narrator, or the template default."""
     template = TemplateRiskNarrator()
-    client = build_llm_client(settings)
+    client = build_analysis_llm_client(settings)
     if client is not None:
         return LLMRiskNarrator(client, fallback=template)
     return template

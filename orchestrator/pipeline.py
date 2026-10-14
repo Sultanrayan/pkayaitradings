@@ -31,6 +31,7 @@ from orchestrator.store import SignalStore
 from shared.config import Settings, get_settings
 from shared.cross_checks import confirm_timeframes
 from shared.hmm_regime import HMMRegimeDetector, build_regime_features
+from shared.llm import cache_hit_rate, llm_stats
 from shared.logging import get_logger
 from shared.messaging import MessageBus, create_message_bus
 from shared.order_flow import analyze_order_flow
@@ -107,6 +108,10 @@ class AnalysisPipeline:
         self.risk = risk
         self.decision = decision
         self.client = client
+        # Retained, not just forwarded to the agents: the health endpoint reads
+        # it to report whether the pipeline is on the Redis bus or the in-memory
+        # fallback, and the agents each hold their own reference to it.
+        self.bus = technical.bus
         self.store = store or SignalStore()
         self._equity = _EquityTracker()
 
@@ -163,7 +168,7 @@ class AnalysisPipeline:
                 timeframe=primary.timeframe,
                 rationale=primary.reasoning,
             )
-            context = await self._build_risk_context(symbol, primary)
+            context = await self.build_risk_context(symbol, primary)
             regime = _regime_from_context(context, primary)
             order_flow = context.order_flow
             risk_assessment = await self.risk.run(proposal, context, correlation_id=correlation_id)
@@ -185,6 +190,9 @@ class AnalysisPipeline:
             risk=risk_assessment,
             decision=decision,
         )
+        # Snapshot the counters after the cycle so the log line reports the
+        # pressure this cycle produced, not the process lifetime.
+        stats = llm_stats()
         _logger.info(
             "pipeline.cycle_complete",
             symbol=symbol,
@@ -192,6 +200,26 @@ class AnalysisPipeline:
             score=decision.final_score,
             traded=decision.executed,
             correlation_id=correlation_id,
+            # Provider pressure for this cycle. rate_limited is the number to
+            # watch: the gateway publishes no rate-limit headers, so this counter
+            # is the only signal that a cycle was competing for capacity.
+            llm_calls=stats["calls"],
+            llm_attempts=stats["attempts"],
+            llm_retries=stats["retries"],
+            llm_rate_limited=stats["rate_limited"],
+            llm_timeouts=stats["timeouts"],
+            llm_budget_exhausted=stats["budget_exhausted"],
+            llm_failures=stats["failures"],
+            llm_prompt_tokens=stats["prompt_tokens"],
+            llm_completion_tokens=stats["completion_tokens"],
+            llm_cached_tokens=stats["cached_tokens"],
+            llm_total_tokens=stats["total_tokens"],
+            llm_usage_missing=stats["usage_missing"],
+            # Derived spend in the provider's billing unit. Cumulative for the
+            # worker process, not per cycle, matching the counters above.
+            llm_cost_units=stats["cost_units"],
+            llm_cost_usd=round(float(stats["cost_usd"]), 6),
+            llm_cache_hit_rate=round(cache_hit_rate(), 4),
         )
         return CycleResult(
             symbol=symbol,
@@ -248,7 +276,13 @@ class AnalysisPipeline:
             raise RuntimeError(f"No technical signal could be produced for {symbol}")
         return signals
 
-    async def _build_risk_context(self, symbol: str, primary: TechnicalSignal) -> RiskContext:
+    async def build_risk_context(self, symbol: str, primary: TechnicalSignal) -> RiskContext:
+        """Assemble the portfolio and market state the Risk Manager needs.
+
+        Public because callers outside a full cycle — the dev API, and tests that
+        exercise the risk path directly — need an identically-built context,
+        rather than a second implementation of this logic drifting out of step.
+        """
         equity = await self._current_equity()
         self._equity.update(equity)
 

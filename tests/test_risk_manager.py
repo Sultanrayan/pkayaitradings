@@ -84,11 +84,50 @@ def test_plan_position_bearish_stops() -> None:
     assert plan.stop_loss > 2650.0 > plan.take_profit
 
 
-def test_plan_position_rejects_neutral() -> None:
-    with pytest.raises(ValueError, match="NEUTRAL"):
-        plan_position(
-            equity=100_000, price=100.0, atr=1.0, confidence=0.5, direction=Direction.NEUTRAL
-        )
+def test_plan_position_accepts_neutral_instead_of_raising() -> None:
+    """A neutral direction is sized, not refused.
+
+    The agents no longer emit ``NEUTRAL``, but a sizer that raised on it would
+    turn a future labelling gap into a crash mid-cycle. Sizing it keeps the
+    failure mode as a wrong number rather than an exception.
+    """
+    plan = plan_position(
+        equity=100_000, price=100.0, atr=1.0, confidence=0.5, direction=Direction.NEUTRAL
+    )
+    assert plan.quantity > 0
+    assert plan.stop_loss is not None
+    assert plan.take_profit is not None
+
+
+def test_plan_position_still_rejects_bad_market_data() -> None:
+    """These are data faults, not trading judgements, so they still raise."""
+    for kwargs, expected in (
+        ({"equity": 0}, "equity must be positive"),
+        ({"price": 0}, "price must be positive"),
+        ({"atr": 0}, "atr must be positive"),
+        ({"atr": -1.0}, "atr must be positive"),
+    ):
+        base = {"equity": 100_000, "price": 100.0, "atr": 1.0, "confidence": 0.5}
+        base.update(kwargs)
+        with pytest.raises(ValueError, match=expected):
+            plan_position(direction=Direction.BULLISH, **base)
+
+
+def test_plan_position_floors_a_zero_kelly_allocation() -> None:
+    """Confidence 0 gives Kelly 0. That must not become a zero-size position.
+
+    A zero quantity was previously read by the caller as "no trade", which is
+    how a weak call became a refusal.
+    """
+    plan = plan_position(
+        equity=100_000,
+        price=100.0,
+        atr=1.0,
+        confidence=0.0,
+        direction=Direction.BULLISH,
+    )
+    assert plan.quantity > 0, "a zero-Kelly call must still be expressible"
+    assert plan.allocation > 0
 
 
 def test_plan_position_caps_risk_per_trade() -> None:

@@ -119,18 +119,89 @@ def test_decide_sell() -> None:
     )
 
 
-def test_decide_wait_in_band() -> None:
+def test_decide_never_waits() -> None:
+    """The middle band used to return WAIT. It is now the primary direction.
+
+    A score of 0.50 between the thresholds is a coin flip, and the honest
+    response to a coin flip at small size is a quarter-size position — not a
+    refusal that leaves the decision to nobody.
+    """
     assert (
         decide(0.5, Direction.BULLISH, approved=True, buy_threshold=0.65, skip_threshold=0.35)
-        is Decision.WAIT
+        is Decision.BUY
     )
 
 
-def test_decide_skips_conflicting_direction() -> None:
+def test_decide_never_waits_on_a_bearish_read_either() -> None:
+    assert (
+        decide(0.5, Direction.BEARISH, approved=True, buy_threshold=0.65, skip_threshold=0.35)
+        is Decision.SELL
+    )
+
+
+def test_a_strong_aggregate_does_not_flip_a_bearish_primary() -> None:
+    """The aggregate sets conviction, not direction.
+
+    The Risk Manager has already priced the stop and target for the technical
+    read. Flipping the action on score would emit a BUY carrying a stop above
+    entry — an unbounded-loss order wearing a bullish label. This test was written
+    after a live cycle produced exactly that.
+    """
     assert (
         decide(0.9, Direction.BEARISH, approved=True, buy_threshold=0.65, skip_threshold=0.35)
+        is Decision.SELL
+    )
+
+
+def test_a_weak_aggregate_does_not_flip_a_bullish_primary() -> None:
+    assert (
+        decide(0.1, Direction.BULLISH, approved=True, buy_threshold=0.65, skip_threshold=0.35)
+        is Decision.BUY
+    )
+
+
+def test_a_bullish_primary_stays_buy_across_the_score_range() -> None:
+    for score in (0.0, 0.35, 0.65, 1.0):
+        assert (
+            decide(
+                score,
+                Direction.BULLISH,
+                approved=True,
+                buy_threshold=0.65,
+                skip_threshold=0.35,
+            )
+            is Decision.BUY
+        )
+
+
+def test_a_drawdown_veto_still_skips() -> None:
+    """The one non-actionable outcome, and it is deliberate.
+
+    ``approved=False`` means the portfolio drawdown limit was breached. That is a
+    loss-limiting control, not a view on the market, so it is not converted into
+    a smaller position.
+    """
+    assert (
+        decide(0.95, Direction.BULLISH, approved=False, buy_threshold=0.65, skip_threshold=0.35)
         is Decision.SKIP
     )
+    assert (
+        decide(0.05, Direction.BEARISH, approved=False, buy_threshold=0.65, skip_threshold=0.35)
+        is Decision.SKIP
+    )
+
+
+@pytest.mark.parametrize("score", [0.0, 0.01, 0.2, 0.35, 0.5, 0.65, 0.8, 0.99, 1.0])
+@pytest.mark.parametrize("direction", [Direction.BULLISH, Direction.BEARISH])
+def test_decide_is_actionable_across_the_whole_score_range(
+    score: float, direction: Direction
+) -> None:
+    """Swept across scores and both directions: never WAIT, never SKIP on a
+    cleared trade."""
+    result = decide(
+        score, direction, approved=True, buy_threshold=0.65, skip_threshold=0.35
+    )
+    assert result in {Decision.BUY, Decision.SELL}
 
 
 class _StubExecutor:

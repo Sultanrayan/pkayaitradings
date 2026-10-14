@@ -33,7 +33,7 @@ from agents.technical_analyst.indicators import (
     rsi,
     sma,
 )
-from shared.schemas.enums import Direction
+from shared.schemas.enums import Direction, Strength
 from shared.schemas.market import OhlcSeries
 from shared.schemas.signals import IndicatorSnapshot, KeyLevels
 
@@ -62,16 +62,26 @@ class TechnicalParams:
 
 @dataclass(frozen=True)
 class StrategyResult:
-    """The output of :func:`evaluate`."""
+    """The output of :func:`evaluate`.
+
+    ``signal`` is always BULLISH or BEARISH. Weakness is expressed through
+    ``confidence``, ``strength`` and the four narrative fields, never by
+    withholding a direction.
+    """
 
     signal: Direction
     confidence: float
+    strength: Strength
     price: float
     indicators: IndicatorSnapshot
     key_levels: KeyLevels
     composite: float
     trend_strength: float
     reasons: list[str] = field(default_factory=list)
+    explanation: str = ""
+    risk_notes: str = ""
+    invalidation: str = ""
+    recommendation: str = ""
 
 
 def to_frame(series: OhlcSeries) -> pd.DataFrame:
@@ -156,6 +166,7 @@ def evaluate(frame: pd.DataFrame, params: TechnicalParams | None = None) -> Stra
 
     trend_strength = _trend_strength(latest.get("adx"))
     signal, confidence = signal_from_composite(composite, trend_strength, params)
+    strength = strength_from_confidence(confidence)
 
     indicators = IndicatorSnapshot(
         rsi=_round(latest.get("rsi")),
@@ -174,15 +185,26 @@ def evaluate(frame: pd.DataFrame, params: TechnicalParams | None = None) -> Stra
     if not reasons:
         reasons.append("No directional edge detected")
 
+    price = float(latest["close"])
+    rounded_composite = round(composite, 4)
+    rounded_strength = round(trend_strength, 4)
+
     return StrategyResult(
         signal=signal,
         confidence=confidence,
-        price=float(latest["close"]),
+        strength=strength,
+        price=price,
         indicators=indicators,
         key_levels=key_levels,
-        composite=round(composite, 4),
-        trend_strength=round(trend_strength, 4),
+        composite=rounded_composite,
+        trend_strength=rounded_strength,
         reasons=reasons,
+        explanation=build_explanation(
+            rounded_composite, rounded_strength, confidence, signal, reasons, indicators
+        ),
+        risk_notes=build_risk_notes(rounded_composite, indicators, reasons),
+        invalidation=build_invalidation(price, indicators, key_levels, signal),
+        recommendation=build_recommendation(signal, strength, rounded_composite),
     )
 
 
@@ -266,12 +288,132 @@ def _trend_strength(adx_value: float | None) -> float:
 def signal_from_composite(
     composite: float, trend_strength: float, params: TechnicalParams
 ) -> tuple[Direction, float]:
-    """Map a ``[-1, 1]`` composite score to a direction and confidence."""
-    if abs(composite) < params.neutral_threshold:
-        return Direction.NEUTRAL, 0.5
-    signal = Direction.BULLISH if composite > 0 else Direction.BEARISH
+    """Map a ``[-1, 1]`` composite score to a direction and confidence.
+
+    Always directional. There is no longer a band that returns ``NEUTRAL``: a
+    market with no edge is reported as the direction its score leans toward, with
+    a confidence near zero, which is honest about the weakness while still being
+    actionable.
+
+    ``params.neutral_threshold`` is retained and still read, but only to decide
+    whether to *label* a call WEAK — it no longer suppresses the call. Removing
+    the value outright would break every caller that constructs
+    ``TechnicalParams`` with it.
+
+    Args:
+        composite: Weighted indicator score in ``[-1, 1]``.
+        trend_strength: ADX-derived conviction multiplier in ``[0.4, 1.0]``.
+        params: Indicator parameters.
+
+    Returns:
+        ``(BULLISH, confidence)`` when the composite is positive, otherwise
+        ``(BEARISH, confidence)``. An exactly-zero composite resolves to BEARISH
+        so the function is total — with no edge either way, the tie-break is
+        arbitrary but must be stable rather than raising or returning nothing.
+    """
+    del params  # Retained in the signature; see the docstring.
+    direction = Direction.BULLISH if composite > 0 else Direction.BEARISH
+    # Floor of 0.05 rather than 0.0: a zero-confidence signal would report as
+    # complete indifference while still carrying a direction, which reads as a
+    # bug in whatever consumes it.
     confidence = max(0.05, min(0.99, abs(composite) * trend_strength))
-    return signal, round(confidence, 4)
+    return direction, round(confidence, 4)
+
+
+def strength_from_confidence(confidence: float) -> Strength:
+    """Band a technical confidence into a :class:`Strength`."""
+    return Strength.from_confidence(confidence)
+
+
+def build_explanation(
+    composite: float,
+    trend_strength: float,
+    confidence: float,
+    direction: Direction,
+    reasons: list[str],
+    indicators: IndicatorSnapshot,
+) -> str:
+    """Explain the call from the indicators that actually fired.
+
+    Built from the live indicator values rather than templated prose, so the text
+    cannot drift from the numbers it describes.
+    """
+    lead = "Bullish" if direction is Direction.BULLISH else "Bearish"
+    parts: list[str] = [f"Technical composite {composite:+.2f} → {lead.lower()}"]
+    if reasons:
+        parts.append("; ".join(reasons))
+    if indicators.adx is not None:
+        parts.append(f"ADX {indicators.adx:.1f}")
+    if indicators.rsi is not None:
+        parts.append(f"RSI {indicators.rsi:.1f}")
+    parts.append(f"trend strength {trend_strength:.2f}")
+    parts.append(f"confidence {confidence:.2f}")
+    return ". ".join(parts) + "."
+
+
+def build_risk_notes(
+    composite: float, indicators: IndicatorSnapshot, reasons: list[str]
+) -> str:
+    """Counter-signals and conditions that would undermine the call.
+
+    Only genuinely present warnings are listed. A risk note that always says
+    something is noise, and a section padded with "none detected" reads as an
+    oversight rather than a clean bill of health.
+    """
+    notes: list[str] = []
+    if indicators.adx is not None and indicators.adx < 20.0:
+        notes.append(f"ADX {indicators.adx:.1f} — weak trend, breakout may fail")
+    if indicators.rsi is not None and indicators.rsi >= 70.0:
+        notes.append(f"RSI {indicators.rsi:.1f} — overbought, vulnerable to a pullback")
+    if indicators.rsi is not None and indicators.rsi <= 30.0:
+        notes.append(f"RSI {indicators.rsi:.1f} — oversold, can stay oversold")
+    if indicators.atr is not None and indicators.ema_fast is not None:
+        atr_pct = indicators.atr / indicators.ema_fast * 100 if indicators.ema_fast else 0.0
+        if atr_pct > 1.5:
+            notes.append(f"ATR {atr_pct:.2f}% of price — wide stops, size accordingly")
+    if abs(composite) < 0.15:
+        notes.append(f"Composite {composite:+.2f} is near zero — direction is a coin flip")
+    counter = [r for r in reasons if "opposite" in r.lower() or "against" in r.lower()]
+    notes.extend(counter)
+    if not notes:
+        return "No counter-signals detected in the indicator set."
+    return "; ".join(notes) + "."
+
+
+def build_invalidation(
+    price: float,
+    indicators: IndicatorSnapshot,
+    key_levels: KeyLevels,
+    direction: Direction,
+) -> str:
+    """The specific level and condition that cancels the call."""
+    parts: list[str] = []
+    if direction is Direction.BULLISH and key_levels.support is not None:
+        parts.append(f"Close below support {key_levels.support:.2f}")
+    elif direction is Direction.BEARISH and key_levels.resistance is not None:
+        parts.append(f"Close above resistance {key_levels.resistance:.2f}")
+    if indicators.atr is not None and indicators.atr > 0:
+        parts.append(f"or a move of {indicators.atr:.2f} against {price:.2f} (1 ATR)")
+    parts.append("or the thesis lapsing after 3 closed candles")
+    return ", ".join(parts) + "."
+
+
+def build_recommendation(
+    direction: Direction, strength: Strength, composite: float
+) -> str:
+    """Actionable advice naming the size, per :attr:`Strength.position_size`."""
+    side = "long" if direction is Direction.BULLISH else "short"
+    size = strength.position_size
+    if strength is Strength.STRONG:
+        lead = f"Take a full-size {side} ({size:.2f}) at market."
+    elif strength is Strength.MODERATE:
+        lead = f"Enter a {side} at {size:.2f} size."
+    else:
+        lead = (
+            f"Directional lean is {side} but weak — take only {size:.2f} size, "
+            "or wait for confirmation."
+        )
+    return f"{lead} Composite {composite:+.2f}."
 
 
 def _key_levels(enriched: pd.DataFrame, params: TechnicalParams) -> KeyLevels:

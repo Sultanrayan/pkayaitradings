@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import fnmatch
+import re
 from collections.abc import AsyncIterator
 from typing import Any, Protocol, runtime_checkable
 
@@ -120,10 +121,25 @@ class RedisMessageBus:
             await self._redis.aclose()
 
 
+def _redact_redis_url(url: str) -> str:
+    """Strip any credentials from a Redis URL so it is safe to log.
+
+    ``redis://user:password@host`` carries a secret. Logging the raw URL is how
+    a password reaches the log store, so the userinfo section is replaced
+    before the value is used in any message.
+    """
+    return re.sub(r"//[^@]*@", "//<redacted>@", url)
+
+
 async def create_message_bus(settings: Any | None = None) -> MessageBus:
     """Build a Redis bus if reachable, otherwise fall back to in-memory.
 
-    The fallback keeps local development and tests working without Redis.
+    The fallback keeps local development and tests working without Redis, and
+    keeps production serving when Redis is unreachable — but the degradation is
+    logged at ERROR with the target URL, because a silent fallback is how a
+    nine-day-old Redis outage went unnoticed. Recovery is by container restart
+    (``restart: unless-stopped`` plus ``depends_on: service_healthy``): this
+    function is called once at startup and does not retry.
     """
     from shared.config import get_settings
 
@@ -133,5 +149,9 @@ async def create_message_bus(settings: Any | None = None) -> MessageBus:
         await bus.ping()
         return bus
     except Exception as exc:
-        _logger.warning("bus.redis_unavailable", error=repr(exc))
+        _logger.error(
+            "bus.redis_degraded",
+            error=repr(exc),
+            url=_redact_redis_url(settings.redis_url),
+        )
         return InMemoryMessageBus()

@@ -16,8 +16,9 @@ or the non-linear weighted geometric mean recommended by the backend-v2
 roadmap (Problem 5). The geometric form treats Risk as a multiplier (a veto
 forces the final score to zero) and applies hard consistency rules.
 
-A risk veto always forces ``SKIP``, regardless of the score — the Risk Manager
-holds veto power.
+:func:`decide` always returns ``BUY`` or ``SELL``. The single exception is the
+Risk Manager's drawdown veto, which still returns ``SKIP``: that is a
+loss-limiting control, not a view on the market.
 """
 
 from __future__ import annotations
@@ -133,26 +134,45 @@ def decide(
 ) -> Decision:
     """Turn a final score and direction into a concrete decision.
 
+    Always actionable. There is no longer a middle band that returns ``WAIT`` and
+    no "unclear enough" path that returns ``SKIP``: a market with no edge is the
+    direction the score leans toward, with a confidence that reflects how little
+    edge there is. Converting a hedge into a quarter-size position is a decision
+    the caller can act on; returning nothing is not a decision at all.
+
+    **One exception, deliberately.** ``approved=False`` still returns ``SKIP``.
+    That is the Risk Manager's portfolio *drawdown* veto — a loss-limiting control
+    rather than a view on the market, and the one condition where continuing to
+    trade would be irresponsible rather than merely unprofitable.
+
     Args:
         final_score: Weighted score in ``[0, 1]``.
         technical_direction: The Technical Analyst's directional view.
-        approved: Whether the Risk Manager approved the trade.
+        approved: Whether the Risk Manager cleared the trade. ``False`` means the
+            drawdown limit was breached.
         buy_threshold: Score at or above which a long is taken.
-        skip_threshold: Score at or below which a short is considered.
+        skip_threshold: Score at or below which a short is considered. Retained
+            for scoring and display; no longer gates the outcome.
 
     Returns:
-        ``BUY``, ``SELL``, ``WAIT`` or ``SKIP``. A risk veto always returns
-        ``SKIP``.
+        ``BUY`` or ``SELL``, or ``SKIP`` on a drawdown veto.
     """
     if not approved:
         return Decision.SKIP
-    if final_score >= buy_threshold and technical_direction is Direction.BULLISH:
-        return Decision.BUY
-    if final_score <= skip_threshold and technical_direction is Direction.BEARISH:
+
+    # The action follows the technical read, never the aggregate.
+    #
+    # The Risk Manager has already priced the stop and target for
+    # ``technical_direction``. Letting a high aggregate flip the action would emit
+    # a BUY carrying a stop above entry and targets below it — an unbounded-loss
+    # order wearing a bullish label. So the score's job is conviction (which
+    # drives strength and size), not direction.
+    #
+    # ``NEUTRAL`` is unreachable from the agents; mapping it to BEARISH rather than
+    # raising means a stale producer degrades to a wrong guess, not a crash.
+    if technical_direction is Direction.BEARISH:
         return Decision.SELL
-    if skip_threshold < final_score < buy_threshold:
-        return Decision.WAIT
-    return Decision.SKIP
+    return Decision.BUY
 
 
 def _clamp(value: float) -> float:

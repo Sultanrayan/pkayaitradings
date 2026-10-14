@@ -16,7 +16,7 @@ from typing import Any, Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict, Field
 
 from shared.config import Settings
-from shared.llm import LLMClient, build_llm_client
+from shared.llm import LLMClient, build_analysis_llm_client
 from shared.logging import get_logger
 
 _logger = get_logger(__name__)
@@ -25,6 +25,10 @@ _SYSTEM = "You explain algorithmic trading decisions concisely and factually."
 _PROMPT = (
     "Explain this algorithmic trading decision in at most three sentences. Be "
     "specific about which signals drove it and what would invalidate it.\n"
+    "You MUST always describe the decision as actionable. Never output SKIP, "
+    "WAIT, NEUTRAL, or 'no trade'. If the decision is uncertain, say so in the "
+    "explanation while still naming the direction, and note the uncertainty "
+    "explicitly as a reduced-confidence case.\n"
     "Context: {context}"
 )
 
@@ -37,7 +41,9 @@ _REVIEW_PROMPT = (
     "a JSON object with exactly these fields: "
     '{{"consistent": <bool>, "conflicts": [<strings>], "red_flags": [<strings>], '
     '"confidence_adjustment": <float in [-{max_adjustment:.2f}, {max_adjustment:.2f}]>}}. '
-    "Only flag real issues; be conservative and factual.\n"
+    "Only flag real issues; be conservative and factual. A low-quality or "
+    "mixed-input decision is not itself a reason to recommend abstention: record "
+    "it as a conflict or red flag and let the caller size it down.\n"
     "Context: {context}"
 )
 
@@ -114,7 +120,13 @@ class LLMReasoner:
         try:
             return await self._client.complete(_PROMPT.format(context=context), system=_SYSTEM)
         except Exception as exc:
-            _logger.warning("reasoner.llm_failed", error=repr(exc))
+            _logger.warning(
+                "reasoner.llm_failed",
+                error=repr(exc),
+                reason=getattr(exc, "reason", "unknown"),
+                attempts=getattr(exc, "attempts", 1),
+                symbol=context.get("symbol"),
+            )
             return await self._fallback.explain(context)
 
     async def review(self, context: dict[str, Any]) -> DecisionReview:
@@ -135,14 +147,22 @@ class LLMReasoner:
                 confidence_adjustment=adjustment,
             )
         except Exception as exc:
-            _logger.warning("reasoner.review_failed", error=repr(exc))
+            # A review fallback means the confidence adjustment defaulted to
+            # zero, which is also what a legitimate "no adjustment" looks like.
+            _logger.warning(
+                "reasoner.review_failed",
+                error=repr(exc),
+                reason=getattr(exc, "reason", "unknown"),
+                attempts=getattr(exc, "attempts", 1),
+                symbol=context.get("symbol"),
+            )
             return await self._fallback.review(context)
 
 
 def build_reasoner(settings: Settings) -> DecisionReasoner:
     """Return the configured reasoner, or the template default."""
     template = TemplateReasoner(max_adjustment=settings.llm_review_adjustment_max)
-    client = build_llm_client(settings)
+    client = build_analysis_llm_client(settings)
     if client is not None:
         return LLMReasoner(
             client,

@@ -93,6 +93,11 @@ class NewsMonitorAgent(BaseAgent):
             historical_reaction=_historical_reaction(headline, symbol),
             alert=alert,
             reasoning=reasoning,
+            # Always a number in [-1, 1]. Derived from the 0..1 sentiment score so
+            # it cannot drift from the enum it represents, and 0.0 for NEUTRAL is
+            # a legitimate "no news edge" weight rather than a missing value.
+            sentiment_score=round(sentiment_result.sentiment.score * 2.0 - 1.0, 4),
+            risk_notes=_risk_notes(event_name, impact, time_until, sentiment_result),
         )
 
     async def run(
@@ -155,6 +160,38 @@ def _time_until(headline: CalendarEvent | None) -> str | None:
     if delta.total_seconds() < 0:
         return f"released {format_duration(-delta)} ago"
     return format_duration(delta)
+
+
+def _risk_notes(
+    event_name: str,
+    impact: Any,
+    time_until: str | None,
+    sentiment_result: Any,
+) -> str:
+    """News-side warnings: the event, its timing, and how contrarian the read is.
+
+    Only genuine conditions are listed. A section padded with "none" reads as an
+    oversight rather than a clean result, so an empty event list returns a
+    positive statement instead.
+    """
+    notes: list[str] = []
+    if event_name and event_name.lower() not in {"none", "no event", "n/a"}:
+        notes.append(f"Event: {event_name}")
+    if time_until:
+        notes.append(f"in {time_until}")
+    impact_value = getattr(impact, "value", str(impact)).lower()
+    if impact_value == "high":
+        notes.append("high-impact event — expect slippage and widened spreads")
+    elif impact_value == "medium":
+        notes.append("moderate-impact event — position size should already reflect it")
+    score = sentiment_result.sentiment.score
+    if score >= 0.75:
+        notes.append("headlines are one-sided — crowded positioning unwinds violently")
+    elif score <= 0.25:
+        notes.append("headlines are one-sided bearish — a bounce is plausible")
+    if not notes:
+        return "No scheduled event and no directional headline skew."
+    return "; ".join(notes) + "."
 
 
 def _historical_reaction(
