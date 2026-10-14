@@ -16,6 +16,11 @@ ARCHIVE="pkay-data-${TS}.tar.gz"
 
 mkdir -p "$OUT_DIR"
 
+# Resolve to an absolute host path: the docker mount below is relative to the
+# host working directory, so an absolute OUT_DIR would otherwise be appended
+# again and land in ./<abs>/ instead.
+OUT_DIR="$(cd "$OUT_DIR" && pwd)"
+
 if ! docker volume inspect "$VOLUME" >/dev/null 2>&1; then
   # First deploy: the volume is created by the stack. Nothing to back up yet.
   echo "Volume '$VOLUME' does not exist yet — nothing to back up (first deploy)."
@@ -24,7 +29,7 @@ fi
 
 docker run --rm \
   -v "${VOLUME}:/data:ro" \
-  -v "$(pwd)/${OUT_DIR}:/backup" \
+  -v "${OUT_DIR}:/backup" \
   alpine sh -c "tar czf /backup/${ARCHIVE} -C /data ."
 
 echo "✓ Wrote ${OUT_DIR}/${ARCHIVE}"

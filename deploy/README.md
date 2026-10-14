@@ -33,6 +33,29 @@ docker compose -f docker-compose.prod.yml --env-file .env.production up -d --bui
 scp -i ~/.ssh/pkay_upcloud backups/pkay-data-*.tar.gz root@94.237.74.255:/root/
 ```
 
+## Runbooks
+
+- `RUNBOOK-redis.md` — Redis/Celery operations, how LLM cost is derived and read
+  from the logs, and the Signal Updater's known limitations.
+- `ENABLE-signal-updater.md` — pre-flight checklist for turning on
+  `signal_update_enabled`, the two-part flip procedure, and the rollback.
+- `verify-signal-updater-flip.sh` — proves the flip procedure end to end in an
+  isolated compose project. Safe to run at any time; touches no production
+  container, env file or queue, and cleans up after itself.
+
+Both are read-only with respect to production until you act on them. The report
+script they reference is:
+
+```bash
+bash deploy/report-24h.sh --since-hours 24 --label "24h stability window"
+```
+
+It builds per-cycle distributions from worker logs rather than trusting the
+cumulative counters, so deploy-time worker restarts do not distort the figures.
+Never grep these logs for bare numbers — Celery task UUIDs contain digit runs
+that match `429`, and a dotted event name also matches the underscored field on
+unrelated lines. Match on `'event': 'name'` instead.
+
 ## Restore after a disk rebuild
 
 ```bash
