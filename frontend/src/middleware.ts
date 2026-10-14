@@ -3,17 +3,41 @@ import type { NextRequest } from "next/server";
 
 const AUTH_COOKIE = "pkay_token";
 
-/** Pages anyone can view (the marketing pages and the auth flow). */
+/**
+ * Pages anyone can view: the marketing pages, the documentation, and the auth
+ * flow.
+ *
+ * A prefix match counts, so `/docs` covers `/docs/guides` and
+ * `/docs/api-reference`. Keep this list in step with the `(marketing)` and
+ * `(auth)` route groups — a public page missing here is invisible behind a login
+ * redirect, which is how the whole docs site ended up gated behind sign-in.
+ */
 const PUBLIC_PATHS = [
   "/",
   "/pricing",
+  "/about",
   "/how-it-works",
+  "/learn-more",
+  "/docs",
   "/api-reference",
   "/apply",
+  "/changelog",
+  "/contact",
+  "/status",
+  "/privacy",
+  "/terms",
   "/login",
   "/register",
   "/auth/callback",
 ];
+
+/**
+ * Always private, even when a prefix above would match. `/pricing/checkout` is
+ * reached through the prefix rule from `/pricing`, but it upgrades a plan, so it
+ * needs a signed-in caller. Checked before {@link PUBLIC_PATHS} so a longer public
+ * prefix cannot quietly expose a private page.
+ */
+const PRIVATE_PATHS = ["/pricing/checkout", "/admin"];
 
 /** Auth pages a signed-in user should be bounced away from. */
 const AUTH_PAGES = ["/login", "/register"];
@@ -42,9 +66,16 @@ export function middleware(request: NextRequest) {
 
   const hasToken = Boolean(request.cookies.get(AUTH_COOKIE)?.value);
 
-  const isPublic = PUBLIC_PATHS.some(
+  // An explicit private entry wins over any public prefix.
+  const isPrivate = PRIVATE_PATHS.some(
     (path) => pathname === path || pathname.startsWith(`${path}/`),
   );
+
+  const isPublic =
+    !isPrivate &&
+    PUBLIC_PATHS.some(
+      (path) => pathname === path || pathname.startsWith(`${path}/`),
+    );
   const isAuthPage = AUTH_PAGES.some(
     (path) => pathname === path || pathname.startsWith(`${path}/`),
   );
