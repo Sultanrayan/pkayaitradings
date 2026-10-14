@@ -92,7 +92,7 @@ async def test_checkout_returns_khqr(
     assert response.status_code == 200
     body = response.json()
     assert body["plan"] == "pro"
-    assert body["amount"] == pytest.approx(15.0)
+    assert body["amount"] == pytest.approx(13.0)
     assert body["payment_id"] == "txn_test0000000001"
     assert body["qr_image"].startswith("data:image/png")
     assert body["qr_string"]
@@ -131,7 +131,8 @@ async def test_verify_activates_plan_when_paid(
 
     plan = await client.get("/api/v1/billing/plan", headers=headers)
     assert plan.json()["plan"] == "pro"
-    assert plan.json()["limit"] == 150
+    assert plan.json()["limit"] == 600
+    assert plan.json()["daily_limit"] == 20
 
 
 async def test_verify_pending_does_not_activate(
@@ -173,24 +174,28 @@ async def test_webhook_activates_plan(
     assert plan.json()["plan"] == "pro"
 
 
-async def test_trial_grants_pro_for_two_months(client: httpx.AsyncClient) -> None:
+async def test_trial_offer_is_gone(client: httpx.AsyncClient) -> None:
+    """The free two-month Pro trial was discontinued.
+
+    410 Gone rather than 404: the endpoint existed, and a 404 would read as a wrong
+    URL and leave callers hunting for an offer that no longer exists.
+    """
     headers = await _register(client, "trial@example.com")
 
     response = await client.post("/api/v1/billing/trial", headers=headers)
-    assert response.status_code == 200
-    body = response.json()
-    assert body["plan"] == "pro"
-    assert body["limit"] == 150
-    assert body["remaining"] == 150
+    assert response.status_code == 410
+    assert "ended" in response.json()["detail"].lower()
 
+    # The caller is still on Free; a refused trial must not have granted anything.
     plan = await client.get("/api/v1/billing/plan", headers=headers)
-    assert plan.json()["plan"] == "pro"
-    assert plan.json()["expires_at"] is not None
+    assert plan.json()["plan"] == "free"
+    assert plan.json()["expires_at"] is None
 
 
-async def test_trial_requires_auth(client: httpx.AsyncClient) -> None:
+async def test_trial_is_gone_even_without_auth(client: httpx.AsyncClient) -> None:
+    """The route is retired outright, so it no longer advertises an auth challenge."""
     response = await client.post("/api/v1/billing/trial")
-    assert response.status_code == 401
+    assert response.status_code == 410
 
 
 async def test_analyze_blocked_when_quota_exhausted(
@@ -204,7 +209,11 @@ async def test_analyze_blocked_when_quota_exhausted(
     headers = {"Authorization": f"Bearer {body['token']}"}
     user = orchestrator_main._users.get(str(body["user"]["id"]))
     assert user is not None
-    exhausted = replace(user, analysis_used=20)
+    # Read the limit from settings rather than hardcoding it: the free allowance
+    # is configurable, and a fixed number silently stops testing the 402 path
+    # whenever that value is raised.
+    limit = orchestrator_main.get_settings().plan_free_monthly_limit
+    exhausted = replace(user, analysis_used=limit)
     orchestrator_main._users.update(exhausted)
 
     response = await client.post("/api/v1/analyze/XAUUSD", headers=headers)

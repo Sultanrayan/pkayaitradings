@@ -142,3 +142,163 @@ def test_alerts_empty_for_quiet_cycle() -> None:
     store = SignalStore()
     _record(store, decision=_decision(executed=False))
     assert store.alerts() == []
+
+
+# --------------------------------------------------------------------------- #
+# record_signal — single records outside a cycle
+# --------------------------------------------------------------------------- #
+
+
+def test_record_signal_appends_one_record() -> None:
+    store = SignalStore()
+    record = store.record_signal(
+        symbol="xauusd",
+        correlation_id="c9",
+        agent="decision_maker",
+        kind="trade_decision",
+        direction="BUY",
+        confidence=0.6,
+        payload={"outcome": "ADJUST"},
+    )
+    assert store.size == 1
+    assert record.symbol == "XAUUSD"
+    assert record.agent == "decision_maker"
+    assert record.kind == "trade_decision"
+    assert record.direction == "BUY"
+
+
+def test_record_signal_is_queryable_and_does_not_disturb_the_cycle() -> None:
+    store = SignalStore()
+    _record(store)
+    # An agent outside the four-agent cycle, so the query below cannot collide
+    # with the records ``_record`` already wrote for each cycle agent.
+    store.record_signal(
+        symbol="XAUUSD",
+        correlation_id="c1",
+        agent="orchestrator",
+        kind="order_fill",
+        direction="BUY",
+        confidence=0.5,
+        payload={},
+    )
+    assert store.size == 5
+    found = store.query(agent="orchestrator")
+    assert len(found) == 1
+    assert found[0].direction == "BUY"
+
+
+def test_record_signal_respects_the_record_cap() -> None:
+    store = SignalStore(max_records=3)
+    for index in range(5):
+        store.record_signal(
+            symbol="XAUUSD",
+            correlation_id=f"c{index}",
+            agent="orchestrator",
+            kind="order_fill",
+            direction="BUY",
+            confidence=0.5,
+            payload={},
+        )
+    assert store.size == 3
+    # The oldest were evicted, so the newest survives.
+    assert store.query(limit=10)[0].correlation_id == "c4"
+
+
+def test_the_agent_roster_is_exactly_four_agents() -> None:
+    """The Signal Updater was removed; four agents remain.
+
+    The roster is the contract behind ``GET /api/v1/agents``, so the count is
+    asserted rather than left implicit.
+    """
+    store = SignalStore()
+    status = {entry["name"]: entry for entry in store.agent_status()}
+    assert set(status) == {
+        "technical_analyst",
+        "news_monitor",
+        "risk_manager",
+        "decision_maker",
+    }
+    assert "signal_updater" not in status
+
+
+def test_an_agent_becomes_active_when_it_records_a_signal() -> None:
+    """Roster wiring still works after the removal; exercised on the decision maker."""
+    store = SignalStore()
+    status = {entry["name"]: entry for entry in store.agent_status()}
+    assert status["decision_maker"]["status"] == "idle"
+
+    store.record_signal(
+        symbol="XAUUSD",
+        correlation_id="c1",
+        agent="decision_maker",
+        kind="trade_decision",
+        direction="BUY",
+        confidence=0.8,
+        payload={},
+    )
+    status = {entry["name"]: entry for entry in store.agent_status()}
+    assert status["decision_maker"]["signal_count"] == 1
+    assert status["decision_maker"]["status"] == "active"
+    assert status["decision_maker"]["avg_confidence"] == 0.8
+
+
+# --------------------------------------------------------------------------- #
+# latest_decision — seeding the Signal Updater
+# --------------------------------------------------------------------------- #
+
+
+def test_latest_decision_returns_the_newest_decision() -> None:
+    store = SignalStore()
+    _record(store)
+    _record(store, decision=_decision(decision=Decision.SELL))
+    found = store.latest_decision("XAUUSD")
+    assert found is not None
+    assert found.decision is Decision.SELL
+
+
+def test_latest_decision_is_symbol_scoped() -> None:
+    store = SignalStore()
+    _record(store)
+    assert store.latest_decision("BTCUSD") is None
+
+
+def test_latest_decision_is_case_insensitive() -> None:
+    store = SignalStore()
+    _record(store)
+    assert store.latest_decision("xauusd") is not None
+
+
+def test_latest_decision_returns_none_on_an_empty_store() -> None:
+    assert SignalStore().latest_decision("XAUUSD") is None
+
+
+def test_latest_decision_skips_an_unreadable_payload() -> None:
+    """A payload from an older schema must not break the updater's startup."""
+    store = SignalStore()
+    _record(store)
+    store.record_signal(
+        symbol="XAUUSD",
+        correlation_id="c1",
+        agent="decision_maker",
+        kind="trade_decision",
+        direction="BUY",
+        confidence=0.5,
+        payload={"decision": "BUY"},  # missing every required field
+    )
+    found = store.latest_decision("XAUUSD")
+    assert found is not None
+    assert found.decision is Decision.BUY
+
+
+def test_latest_decision_ignores_non_decision_kinds() -> None:
+    store = SignalStore()
+    store.record_signal(
+        symbol="XAUUSD",
+        correlation_id="c1",
+        agent="decision_maker",
+        kind="trade_decision",
+        direction="BUY",
+        confidence=0.5,
+        payload={},
+    )
+    assert store.latest_decision("XAUUSD") is None

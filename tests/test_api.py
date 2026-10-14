@@ -35,6 +35,46 @@ async def test_health(client: httpx.AsyncClient) -> None:
     assert "XAUUSD" in body["symbols"]
 
 
+async def test_health_reports_in_memory_bus_as_degraded(
+    client: httpx.AsyncClient,
+) -> None:
+    """The test pipeline uses InMemoryMessageBus, so Redis reads unavailable."""
+    body = (await client.get("/health")).json()
+    assert body["redis"] == "unavailable"
+    assert body["degraded"] == "in_memory_bus"
+
+
+async def test_health_stays_ok_while_redis_is_unavailable(
+    client: httpx.AsyncClient,
+) -> None:
+    """Degradation must be observable without failing the liveness probe.
+
+    The API serves correctly on the in-memory bus, so a Redis outage must not
+    take the site down through the probe Docker and Caddy poll.
+    """
+    response = await client.get("/health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["redis"] == "unavailable"
+    assert body["status"] == "ok"
+
+
+async def test_health_reports_ok_on_a_redis_bus(
+    configured_app: FastAPI, client: httpx.AsyncClient
+) -> None:
+    """A RedisMessageBus is only constructed after a successful ping."""
+    from shared.messaging import RedisMessageBus
+
+    original = configured_app.state.pipeline.bus
+    configured_app.state.pipeline.bus = RedisMessageBus("redis://redis:6379/0")
+    try:
+        body = (await client.get("/health")).json()
+    finally:
+        configured_app.state.pipeline.bus = original
+    assert body["redis"] == "ok"
+    assert body["degraded"] is None
+
+
 async def test_tick_endpoint(client: httpx.AsyncClient) -> None:
     response = await client.get("/api/v1/tick/XAUUSD")
     assert response.status_code == 200

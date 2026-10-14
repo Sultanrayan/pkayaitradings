@@ -50,6 +50,11 @@ class User:
     plan_expires_at: datetime | None = None
     analysis_used: int = 0
     analysis_period_start: datetime = field(default_factory=_utcnow)
+    # Daily cap accounting. Tracked separately from the billing-period counters
+    # because both caps are enforced independently; ``analysis_day_start`` is the
+    # UTC midnight the day counter belongs to.
+    analysis_used_today: int = 0
+    analysis_day_start: datetime = field(default_factory=_utcnow)
 
 
 def hash_password(password: str, *, salt: bytes | None = None) -> str:
@@ -166,6 +171,8 @@ def _serialise_user(user: User) -> dict[str, Any]:
         "plan_expires_at": user.plan_expires_at.isoformat() if user.plan_expires_at else None,
         "analysis_used": user.analysis_used,
         "analysis_period_start": user.analysis_period_start.isoformat(),
+        "analysis_used_today": user.analysis_used_today,
+        "analysis_day_start": user.analysis_day_start.isoformat(),
     }
 
 
@@ -175,6 +182,9 @@ def _deserialise_user(raw: dict[str, Any]) -> User | None:
         created_raw = raw.get("created_at")
         period_raw = raw.get("analysis_period_start")
         expires_raw = raw.get("plan_expires_at")
+        # Absent on records written before daily caps existed; treat them as a fresh
+        # day so nobody is locked out by a missing counter.
+        day_raw = raw.get("analysis_day_start")
         return User(
             id=str(raw["id"]),
             name=str(raw["name"]),
@@ -194,6 +204,10 @@ def _deserialise_user(raw: dict[str, Any]) -> User | None:
                 if period_raw
                 else datetime.now(UTC)
             ),
+            analysis_used_today=int(raw.get("analysis_used_today") or 0),
+            analysis_day_start=(
+                datetime.fromisoformat(str(day_raw)) if day_raw else datetime.now(UTC)
+            ),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -210,11 +224,25 @@ class UserStore:
     def __init__(self, path: str | Path | None = None) -> None:
         self._users: dict[str, User] = {}
         self._by_email: dict[str, str] = {}
+        # Rows present on disk that could not be deserialised. Kept so they are never
+        # silently written out of existence by a later persist.
+        self._unreadable: list[dict] = []
         self._path = Path(path) if path else None
         self._load()
 
     def _load(self) -> None:
-        """Load persisted users from disk when a path is configured."""
+        """Load persisted users from disk when a path is configured.
+
+        A row that cannot be read is **never** dropped silently. Previously an
+        unreadable row was skipped, and the next ``_persist`` then rewrote the file
+        without it — so one unexpected record shape destroyed an account with no
+        error anywhere. That matters most right now: adding a field to :class:`User`
+        is exactly the kind of change that makes an older record unreadable.
+
+        Such rows are now held aside and :meth:`assert_intact` refuses to let the
+        service persist until they are dealt with, so a bad record stops the
+        deployment instead of eating a user.
+        """
         if self._path is None:
             return
         raw = read_json(self._path)
@@ -222,17 +250,39 @@ class UserStore:
             return
         for row in raw:
             if not isinstance(row, dict):
+                self._unreadable.append(row)
                 continue
             user = _deserialise_user(row)
             if user is None:
+                self._unreadable.append(row)
                 continue
             self._users[user.id] = user
             self._by_email[user.email] = user.id
 
+    def assert_intact(self) -> None:
+        """Raise when any persisted row failed to load.
+
+        Called before every write. Without this, an unreadable record is a delayed
+        data loss: the store looks healthy until the first write after startup,
+        which then persists the shortened registry.
+        """
+        if not self._unreadable:
+            return
+        raise AuthError(
+            f"{len(self._unreadable)} persisted user record(s) could not be read; "
+            "refusing to write a store that would drop them. Check the data volume "
+            "and restore from deploy/backups if this persists."
+        )
+
     def _persist(self) -> None:
-        """Write the registry to disk (no-op when persistence is disabled)."""
+        """Write the registry to disk (no-op when persistence is disabled).
+
+        Refuses to write while any record is unreadable; see
+        :meth:`assert_intact` for why.
+        """
         if self._path is None:
             return
+        self.assert_intact()
         write_json(self._path, [_serialise_user(user) for user in self._users.values()])
 
     @property

@@ -46,19 +46,27 @@ def test_token_round_trip() -> None:
     assert payload["email"] == "ada@example.com"
 
 
-def test_token_rejects_tampering_and_expiry() -> None:
+def test_token_rejects_tampering() -> None:
     store = UserStore()
     user = store.register("Ada", "ada2@example.com", "supersecret")
     token = create_token(user, SECRET, ttl_seconds=60)
     body, signature = token.split(".")
-    # Flip the last base64 character to a guaranteed-different one; hardcoding
-    # "x" made this test flaky whenever the signature already ended in "x".
-    tampered_char = "A" if signature[-1] != "A" else "B"
+    # Tamper at index 0, not the final character. A 32-byte HMAC-SHA256 digest
+    # base64url-encodes to 43 characters carrying 258 bits, so the last character
+    # holds only 2 significant bits and the other 4 are discarded on decode.
+    # Swapping it therefore reproduced the original digest roughly 6% of the
+    # time, the signature verified, and this test failed intermittently. The
+    # leading character is always significant, so altering it is deterministic.
+    replacement = "A" if signature[0] != "A" else "B"
     with pytest.raises(AuthError):
-        decode_token(f"{body}.{signature[:-1]}{tampered_char}", SECRET)
+        decode_token(f"{body}.{replacement}{signature[1:]}", SECRET)
     with pytest.raises(AuthError):
         decode_token("garbage", SECRET)
 
+
+def test_token_rejects_expiry() -> None:
+    store = UserStore()
+    user = store.register("Ada", "ada3@example.com", "supersecret")
     expired = create_token(user, SECRET, ttl_seconds=-1)
     with pytest.raises(AuthError):
         decode_token(expired, SECRET)
